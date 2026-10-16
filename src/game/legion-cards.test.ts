@@ -106,7 +106,7 @@ describe('storm and legion cards', () => {
     expect(third.players[1].field[0]?.hp).toBe(80)
     expect(third.players[1].field[0]?.statuses[0]).toMatchObject({ kind: 'wet', turns: 3 })
     expect(third.players[1].field[0]?.equipment[0]?.hp).toBe(20)
-    expect(third.players[1].field[0]?.equipment[0]?.statuses).toBeUndefined()
+    expect(third.players[1].field[0]?.equipment[0]).not.toHaveProperty('statuses')
     expect(third.players[0].field[1]?.hp).toBe(80)
     expect(third.players[0].field[1]?.statuses[0]).toMatchObject({ kind: 'wet', turns: 3 })
     expect(third.abilityUsesLeft).toBe(0)
@@ -135,7 +135,7 @@ describe('storm and legion cards', () => {
 
     const goo = main(game())
     put(goo.players[0], 0, 'gale_serpent', { energy: 2 })
-    put(goo.players[1], 0, 'blob', { hp: 50, statuses: [{ kind: 'goo', turns: 1 }] })
+    put(goo.players[1], 0, 'blob', { hp: 50, statuses: [{ kind: 'goo', turns: 1, skipNextTick: false }] })
     const stuck = use(goo, 'tail_gale', (candidate) => candidate.type === 'USE_ABILITY' && candidate.target?.player === 1 && candidate.target.kind === 'monster')
     expect(stuck.pending).toBeNull()
     expect(stuck.players[1].field[0]?.hp).toBe(20)

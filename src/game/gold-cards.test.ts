@@ -230,7 +230,7 @@ describe('gold affinity cards', () => {
     let next = use(
       state,
       'theft',
-      (a) => a.type === 'USE_ABILITY' && a.target?.kind === 'equipment' && a.target.defId === undefined && a.target.slot === 0,
+      (a) => a.type === 'USE_ABILITY' && a.target?.kind === 'equipment' && a.target.slot === 0,
     )
     expect(next.players[0].field[0]!.equipment.map((eq) => eq.defId).sort()).toEqual(['shield', 'sword'])
     expect(next.players[1].field[0]!.equipment.map((eq) => eq.defId)).toEqual(['sword'])

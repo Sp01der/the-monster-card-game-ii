@@ -43,7 +43,8 @@ function main(state: GameState, player: 0 | 1 = 0): GameState {
 
 function uses(state: GameState, abilityId: string, kind: 'monster' | 'equipment') {
   return listLegalActions(state).filter(
-    (action) => action.type === 'USE_ABILITY' && action.abilityId === abilityId && action.target?.kind === kind,
+    (action): action is Extract<GameAction, { type: 'USE_ABILITY' }> =>
+      action.type === 'USE_ABILITY' && action.abilityId === abilityId && action.target?.kind === kind,
   )
 }
 

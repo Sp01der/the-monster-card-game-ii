@@ -139,6 +139,7 @@ export function CardFace({
           <div className="card-equipment">
             {field.equipment.map((eq, eqIndex) => {
               const highlighted = highlightedEquipment?.has(eqIndex)
+              const eqCard = getCard(eq.defId)
               return (
                 <span
                   key={eq.instanceId}
@@ -164,10 +165,8 @@ export function CardFace({
                       : undefined
                   }
                 >
-                  {getCard(eq.defId).name} ♥
-                  {getCard(eq.defId).kind === 'equipment' && getCard(eq.defId).indestructible
-                    ? '∞'
-                    : eq.hp}
+                  {eqCard.name} ♥
+                  {eqCard.kind === 'equipment' && eqCard.indestructible ? '∞' : eq.hp}
                 </span>
               )
             })}
