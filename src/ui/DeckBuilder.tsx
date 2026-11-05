@@ -52,7 +52,7 @@ const FILTERS: { id: KindFilter; label: string }[] = [
   { id: 'equipment', label: 'Equipment' },
 ]
 
-const TYPE_FILTERS: { id: CardSearchType; label: string; group: 'Damage' | 'Family' }[] = [
+const TYPE_FILTERS: { id: CardSearchType; label: string; group: 'Damage' | 'Family' | 'Trait' }[] = [
   { id: 'fire', label: 'Fire', group: 'Damage' },
   { id: 'water', label: 'Water', group: 'Damage' },
   { id: 'ice', label: 'Ice', group: 'Damage' },
@@ -68,6 +68,8 @@ const TYPE_FILTERS: { id: CardSearchType; label: string; group: 'Damage' | 'Fami
   { id: 'woody', label: 'Woody', group: 'Family' },
   { id: 'stormling', label: 'Stormling', group: 'Family' },
   { id: 'blob', label: 'Blob', group: 'Family' },
+  { id: 'dark_charge', label: 'Dark Charge', group: 'Trait' },
+  { id: 'gold_affinity', label: 'Gold Affinity', group: 'Trait' },
 ]
 
 function draftToSetup(draft: Draft): DeckSetup {
@@ -343,7 +345,7 @@ export function DeckBuilder({ onStart }: Props) {
                 onChange={(e) => setCardType(e.target.value as CardSearchType | 'any')}
               >
                 <option value="any">Any type</option>
-                {(['Damage', 'Family'] as const).map((group) => (
+                {(['Damage', 'Family', 'Trait'] as const).map((group) => (
                   <optgroup key={group} label={group}>
                     {TYPE_FILTERS.filter((filter) => filter.group === group).map((filter) => (
                       <option key={filter.id} value={filter.id}>

@@ -1,4 +1,5 @@
 import { getMonster, getWeaknesses } from './catalog'
+import { wearsSaphireRing } from './helpers'
 import type { DamageType, FieldMonster, GameState, PlayerId, PlayerState, TargetRef } from './types'
 
 /** Round n to nearest 10; .5 rounds away from zero in the usual half-up sense for positives. */
@@ -127,7 +128,7 @@ export function computeDamage(args: {
   } = args
   if (base <= 0) return 0
   let amount = base
-  if (attacker?.statuses.some((status) => status.kind === 'weakened')) {
+  if (attacker && !wearsSaphireRing(attacker) && attacker.statuses.some((status) => status.kind === 'weakened')) {
     amount = roundToNearest10(amount / 2)
   }
 
@@ -144,9 +145,14 @@ export function computeDamage(args: {
     amount += (attacker.gold ?? 0) * 10
   }
   if (bonusBeforeWeakness > 0) amount += bonusBeforeWeakness
+  if (attacker && damageType === 'shadow') amount += attacker.shadowBonus ?? 0
 
   const def = getMonster(defender.defId)
-  if (damageType === 'water' && defender.statuses.some((s) => s.kind === 'wet')) {
+  if (
+    damageType === 'water' &&
+    !wearsSaphireRing(defender) &&
+    defender.statuses.some((s) => s.kind === 'wet')
+  ) {
     amount += 10
   }
   const weaknesses = defender.weaknessOverride

@@ -156,6 +156,8 @@ export type FieldMonster = {
   fortifyHitsLeft?: number
   /** Gold Affinity counter. Not equipment, and not taken by attacks. */
   gold?: number
+  /** Cloud of Darkness: permanent bonus to shadow damage this monster deals. */
+  shadowBonus?: number
   /** Occupies a slot that exists only while this monster remains in play. */
   ownsExtraSlot?: boolean
 }
@@ -389,6 +391,9 @@ export type PendingInteraction =
       kind: 'playCards'
       owner: PlayerId
       played: number
+      /** Darklight Portal plays from the discard, once. Starlight plays from the hand. */
+      from?: 'hand' | 'discard'
+      limit?: number
     }
   | {
       kind: 'eldersEye'
@@ -423,6 +428,36 @@ export type PendingInteraction =
       kind: 'placeWeed'
       owner: PlayerId
     }
+  | {
+      kind: 'placeBoneling'
+      owner: PlayerId
+      remaining: number
+    }
+  | {
+      kind: 'bringForth'
+      owner: PlayerId
+      sourceSlot: number
+    }
+  | {
+      kind: 'cloudDestroy'
+      owner: PlayerId
+      sourceSlot: number
+      chosenInstanceIds: string[]
+    }
+  | {
+      kind: 'cloudBless'
+      owner: PlayerId
+      remaining: number
+    }
+  | {
+      kind: 'riftEye'
+      owner: PlayerId
+      cards: HandCard[]
+      discarded: string[]
+      /** Kept cards, first clicked becomes the top of the deck. */
+      order: string[]
+      stage: 'discard' | 'order'
+    }
 
 export type TargetRef =
   | { kind: 'monster'; player: PlayerId; slot: number }
@@ -451,17 +486,21 @@ export type GameAction =
       handIndex: number
       slot: number
       stance: Stance
+      /** Index into the discard pile instead of the hand. */
+      fromDiscard?: boolean
     }
   | {
       type: 'PLAY_EFFECT'
       handIndex: number
       /** One or two targets depending on the effect. */
       targets: TargetRef[]
+      fromDiscard?: boolean
     }
   | {
       type: 'PLAY_EQUIPMENT'
       handIndex: number
       slot: number
+      fromDiscard?: boolean
     }
   | { type: 'SKIP_MAIN' }
   | { type: 'WITHDRAW'; slot: number }
@@ -506,6 +545,14 @@ export type GameAction =
   | { type: 'KEYSTONE_CANCEL' }
   | { type: 'FAIRY_HEAL'; target: TargetRef }
   | { type: 'PLACE_WEED'; slot: number; stance: Stance }
+  | { type: 'PLACE_BONELING'; slot: number }
+  | { type: 'CATACOMB_PICK'; instanceId: string }
+  | { type: 'CLOUD_TOGGLE'; instanceId: string }
+  | { type: 'CLOUD_FINISH' }
+  | { type: 'CLOUD_BLESS'; target: TargetRef }
+  | { type: 'RIFT_TOGGLE'; instanceId: string }
+  | { type: 'RIFT_CONFIRM' }
+  | { type: 'RIFT_ORDER'; instanceId: string }
   | { type: 'STORM_TYPE'; damageType: 'electric' | 'water' }
   | { type: 'FORCE_WITHDRAW'; accept: boolean }
   | { type: 'END_TURN' }

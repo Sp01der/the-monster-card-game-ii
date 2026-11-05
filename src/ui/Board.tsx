@@ -25,6 +25,7 @@ type Props = {
 type UiSel =
   | { kind: 'none' }
   | { kind: 'hand'; handIndex: number }
+  | { kind: 'discardPlay'; discardIndex: number }
   | {
       kind: 'ability'
       slot: number
@@ -178,6 +179,22 @@ function describeAction(state: GameState, action: GameAction): string {
       return 'Heal 10 HP'
     case 'PLACE_WEED':
       return `Place Lovni's Weed ${action.stance}`
+    case 'PLACE_BONELING':
+      return 'Place a Boneling'
+    case 'CATACOMB_PICK':
+      return 'Destroy this card'
+    case 'CLOUD_TOGGLE':
+      return 'Choose a card to destroy'
+    case 'CLOUD_FINISH':
+      return 'Destroy the chosen cards'
+    case 'CLOUD_BLESS':
+      return 'Give +10 shadow damage'
+    case 'RIFT_TOGGLE':
+      return 'Discard or keep this card'
+    case 'RIFT_CONFIRM':
+      return 'Put the rest back in order'
+    case 'RIFT_ORDER':
+      return 'Put this card back'
     case 'STORM_TYPE':
       return action.damageType === 'electric' ? 'Electric' : 'Water'
     case 'FORCE_WITHDRAW':
@@ -219,17 +236,23 @@ export function Board({ state, onChange, onNewGame }: Props) {
   const [undoStack, setUndoStack] = useState<GameState[]>([])
   const [rallyFirst, setRallyFirst] = useState<TargetRef | null>(null)
   const [discardView, setDiscardView] = useState<0 | 1 | null>(null)
+  /** Card chosen in the Darklight Portal modal before pressing Play. */
+  const [darklightPick, setDarklightPick] = useState<number | null>(null)
   const legal = useMemo(() => listLegalActions(state), [state])
   const active = state.players[state.activePlayer]
   const inactive = state.players[state.activePlayer === 0 ? 1 : 0]
   const canDraw = legal.some((a) => a.type === 'DRAW')
   const lastRoll = state.log.findLast((entry) => entry.dieRoll !== undefined)?.dieRoll
+  const darklightPending =
+    state.pending?.kind === 'playCards' && state.pending.from === 'discard'
+  const darklightModalOpen = Boolean(darklightPending && sel.kind !== 'discardPlay')
 
   function dispatch(action: GameAction) {
     setUndoStack((stack) => (isUndoablePhaseAction(action) ? [...stack, state] : []))
     const next = applyAction(state, action)
     setSel({ kind: 'none' })
     setRallyFirst(null)
+    setDarklightPick(null)
     onChange(next)
   }
 
@@ -239,7 +262,32 @@ export function Board({ state, onChange, onNewGame }: Props) {
     setUndoStack((stack) => stack.slice(0, -1))
     setSel({ kind: 'none' })
     setRallyFirst(null)
+    setDarklightPick(null)
     onChange(previous)
+  }
+
+  function confirmDarklightPlay() {
+    if (darklightPick === null) return
+    const immediate = legal.find(
+      (a) =>
+        a.type === 'PLAY_EFFECT' &&
+        a.fromDiscard &&
+        a.handIndex === darklightPick &&
+        a.targets.length === 0,
+    )
+    if (immediate) {
+      dispatch(immediate)
+      return
+    }
+    const playable = legal.some(
+      (a) =>
+        (a.type === 'PLAY_MONSTER' || a.type === 'PLAY_EFFECT' || a.type === 'PLAY_EQUIPMENT') &&
+        a.fromDiscard &&
+        a.handIndex === darklightPick,
+    )
+    if (!playable) return
+    setSel({ kind: 'discardPlay', discardIndex: darklightPick })
+    setDarklightPick(null)
   }
 
   const undoButton =
@@ -370,6 +418,27 @@ export function Board({ state, onChange, onNewGame }: Props) {
         highlightTargets.add(`slot-${state.pending.owner}-${action.slot}-${action.stance}`)
       }
     }
+  } else if (state.pending?.kind === 'placeBoneling') {
+    prompt = `Place an active Boneling (${state.pending.remaining} remaining).`
+    for (const action of legal) {
+      if (action.type === 'PLACE_BONELING') {
+        highlightTargets.add(`slot-${state.pending.owner}-${action.slot}-active`)
+      }
+    }
+  } else if (state.pending?.kind === 'bringForth') {
+    prompt = 'Destroy a card in your discard, then place a Boneling.'
+  } else if (state.pending?.kind === 'cloudDestroy') {
+    prompt = `Destroy any number of discarded cards (${state.pending.chosenInstanceIds.length} chosen).`
+  } else if (state.pending?.kind === 'cloudBless') {
+    prompt = `Choose a monster to gain +10 shadow damage (${state.pending.remaining} remaining). The same monster can be chosen again.`
+    for (const action of legal) {
+      if (action.type === 'CLOUD_BLESS') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'riftEye') {
+    prompt =
+      state.pending.stage === 'discard'
+        ? `Eye o' the Rift: choose cards to discard (${state.pending.discarded.length} discarded), then put the rest back.`
+        : `Put the remaining cards back. The next card you choose goes on top (${state.pending.order.length} placed).`
   } else if (state.pending?.kind === 'spawnBlobs') {
     prompt = `Place generated Blob (${state.pending.remaining} remaining).`
     for (const a of legal) {
@@ -388,7 +457,10 @@ export function Board({ state, onChange, onNewGame }: Props) {
     const card = active.hand[sel.handIndex]
     const def = getCard(card.defId)
     if (def.kind === 'monster') {
-      prompt = 'Place on the front (active) or back (withdrawn) of an empty slot.'
+      prompt =
+        def.id === 'boneling'
+          ? 'Place this Boneling on the front. It cannot withdraw.'
+          : 'Place on the front (active) or back (withdrawn) of an empty slot.'
       for (const a of legal) {
         if (a.type === 'PLAY_MONSTER' && a.handIndex === sel.handIndex) {
           highlightTargets.add(`slot-${active.id}-${a.slot}-${a.stance}`)
@@ -407,20 +479,60 @@ export function Board({ state, onChange, onNewGame }: Props) {
           ? rallyFirst
             ? 'Choose the second monster for Rally.'
             : 'Choose the first monster for Rally.'
-          : 'Choose a target.'
+          : def.effectId === 'runestoneFires'
+            ? rallyFirst
+              ? 'Choose the monster that gains 3 energy and an extra action.'
+              : 'Choose the monster whose HP becomes 0.'
+            : 'Choose a target.'
       for (const a of legal) {
         if (a.type !== 'PLAY_EFFECT' || a.handIndex !== sel.handIndex) continue
-        if (def.effectId === 'rally' && rallyFirst) {
+        const twoStep = def.effectId === 'rally' || def.effectId === 'runestoneFires'
+        if (twoStep && rallyFirst) {
           const [t0, t1] = a.targets
           if (actionsEqualTargets(t0, rallyFirst)) highlightTargets.add(targetKey(t1))
-          if (actionsEqualTargets(t1, rallyFirst)) highlightTargets.add(targetKey(t0))
+          if (def.effectId !== 'runestoneFires' && actionsEqualTargets(t1, rallyFirst)) {
+            highlightTargets.add(targetKey(t0))
+          }
         } else if (a.targets[0]) {
           highlightTargets.add(targetKey(a.targets[0]))
-          if (def.effectId === 'rally' && a.targets[1]) {
+          if (twoStep && a.targets[1]) {
             highlightTargets.add(targetKey(a.targets[1]))
           }
         }
       }
+    }
+  } else if (darklightPending) {
+    if (sel.kind === 'discardPlay') {
+      const card = active.discard[sel.discardIndex]
+      const def = card ? getCard(card.defId) : null
+      if (def?.kind === 'monster') {
+        prompt =
+          def.id === 'boneling'
+            ? `Playing ${def.name}: place it on the front. It cannot withdraw.`
+            : `Playing ${def.name}: place it on the front (active) or back (withdrawn) of an empty slot.`
+        for (const a of legal) {
+          if (a.type === 'PLAY_MONSTER' && a.fromDiscard && a.handIndex === sel.discardIndex) {
+            highlightTargets.add(`slot-${active.id}-${a.slot}-${a.stance}`)
+          }
+        }
+      } else if (def?.kind === 'equipment') {
+        prompt = `Playing ${def.name}: choose one of your monsters to equip.`
+        for (const a of legal) {
+          if (a.type === 'PLAY_EQUIPMENT' && a.fromDiscard && a.handIndex === sel.discardIndex) {
+            highlightTargets.add(`mon-${active.id}-${a.slot}`)
+          }
+        }
+      } else if (def) {
+        prompt = `Playing ${def.name}: choose a target.`
+        for (const a of legal) {
+          if (a.type === 'PLAY_EFFECT' && a.fromDiscard && a.handIndex === sel.discardIndex && a.targets[0]) {
+            highlightTargets.add(targetKey(a.targets[0]))
+            if (a.targets[1]) highlightTargets.add(targetKey(a.targets[1]))
+          }
+        }
+      }
+    } else {
+      prompt = 'Darklight Portal: choose a card from your discard, then press Play.'
     }
   } else if (state.pending?.kind === 'playCards') {
     prompt = 'Play any number of cards from your hand, then finish.'
@@ -499,6 +611,7 @@ export function Board({ state, onChange, onNewGame }: Props) {
   }
 
   function onFieldSlotClick(playerId: 0 | 1, slot: number, stance?: Stance) {
+    if (darklightModalOpen) return
     const clicked: TargetRef = { kind: 'monster', player: playerId, slot }
     if (state.pending?.kind === 'assignGold' && playerId === state.pending.owner) {
       const action = legal.find((a) => a.type === 'ASSIGN_GOLD' && a.slot === slot)
@@ -548,6 +661,18 @@ export function Board({ state, onChange, onNewGame }: Props) {
     if (state.pending?.kind === 'soundWave') {
       const action = legal.find(
         (a) => a.type === 'SOUND_WAVE_TARGET' && actionsEqualTargets(a.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'placeBoneling' && playerId === state.pending.owner) {
+      const action = legal.find((a) => a.type === 'PLACE_BONELING' && a.slot === slot)
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'cloudBless') {
+      const action = legal.find(
+        (a) => a.type === 'CLOUD_BLESS' && actionsEqualTargets(a.target, clicked),
       )
       if (action) dispatch(action)
       return
@@ -618,8 +743,9 @@ export function Board({ state, onChange, onNewGame }: Props) {
       }
       const card = active.hand[sel.handIndex]
       const def = getCard(card.defId)
-      if (def.kind === 'effect') {
-        if (def.effectId === 'rally') {
+        if (def.kind === 'effect') {
+        const twoStep = def.effectId === 'rally' || def.effectId === 'runestoneFires'
+        if (twoStep) {
           const monster = state.players[playerId].field[slot]
           if (!monster) return
           const t: TargetRef = { kind: 'monster', player: playerId, slot }
@@ -627,19 +753,27 @@ export function Board({ state, onChange, onNewGame }: Props) {
             setRallyFirst(t)
             return
           }
-          const play = legal.find(
-            (a) =>
-              a.type === 'PLAY_EFFECT' &&
-              a.handIndex === sel.handIndex &&
-              a.targets.length === 2 &&
-              ((actionsEqualTargets(a.targets[0], rallyFirst) &&
-                actionsEqualTargets(a.targets[1], t)) ||
-                (actionsEqualTargets(a.targets[1], rallyFirst) &&
-                  actionsEqualTargets(a.targets[0], t))),
-          )
-          if (play) {
+          const ordered = legal.find((a) => {
+            if (
+              a.type !== 'PLAY_EFFECT' ||
+              a.fromDiscard ||
+              a.handIndex !== sel.handIndex ||
+              a.targets.length !== 2
+            ) {
+              return false
+            }
+            const forward =
+              actionsEqualTargets(a.targets[0], rallyFirst) && actionsEqualTargets(a.targets[1], t)
+            if (def.effectId === 'runestoneFires') return forward
+            return (
+              forward ||
+              (actionsEqualTargets(a.targets[1], rallyFirst) &&
+                actionsEqualTargets(a.targets[0], t))
+            )
+          })
+          if (ordered) {
             setRallyFirst(null)
-            dispatch(play)
+            dispatch(ordered)
           }
           return
         }
@@ -653,6 +787,47 @@ export function Board({ state, onChange, onNewGame }: Props) {
         )
         if (play) dispatch(play)
       }
+      return
+    }
+
+    if (sel.kind === 'discardPlay') {
+      if (stance) {
+        const playMon = legal.find(
+          (a) =>
+            a.type === 'PLAY_MONSTER' &&
+            a.fromDiscard &&
+            a.handIndex === sel.discardIndex &&
+            a.slot === slot &&
+            a.stance === stance &&
+            playerId === active.id,
+        )
+        if (playMon) {
+          dispatch(playMon)
+          return
+        }
+      }
+      const playEq = legal.find(
+        (a) =>
+          a.type === 'PLAY_EQUIPMENT' &&
+          a.fromDiscard &&
+          a.handIndex === sel.discardIndex &&
+          a.slot === slot &&
+          playerId === active.id,
+      )
+      if (playEq) {
+        dispatch(playEq)
+        return
+      }
+      const tMonster: TargetRef = { kind: 'monster', player: playerId, slot }
+      const play = legal.find(
+        (a) =>
+          a.type === 'PLAY_EFFECT' &&
+          a.fromDiscard &&
+          a.handIndex === sel.discardIndex &&
+          a.targets.length === 1 &&
+          actionsEqualTargets(a.targets[0], tMonster),
+      )
+      if (play) dispatch(play)
       return
     }
 
@@ -829,11 +1004,13 @@ export function Board({ state, onChange, onNewGame }: Props) {
   }
 
   function onAbilityClick(playerId: 0 | 1, slot: number, abilityId: string) {
+    if (darklightModalOpen) return
     if (playerId !== active.id || state.phase !== 'main') return
     beginAbility(slot, abilityId)
   }
 
   function onEquipmentClick(playerId: 0 | 1, slot: number, equipmentIndex: number) {
+    if (darklightModalOpen) return
     const t: TargetRef = { kind: 'equipment', player: playerId, slot, equipmentIndex }
     if (state.pending?.kind === 'fairyHeal') {
       const action = legal.find(
@@ -872,6 +1049,18 @@ export function Board({ state, onChange, onNewGame }: Props) {
       if (play) dispatch(play)
       return
     }
+    if (sel.kind === 'discardPlay') {
+      const play = legal.find(
+        (a) =>
+          a.type === 'PLAY_EFFECT' &&
+          a.fromDiscard &&
+          a.handIndex === sel.discardIndex &&
+          a.targets.length === 1 &&
+          actionsEqualTargets(a.targets[0], t),
+      )
+      if (play) dispatch(play)
+      return
+    }
     if (sel.kind === 'ability') {
       const use = legal.find(
         (a) =>
@@ -888,8 +1077,9 @@ export function Board({ state, onChange, onNewGame }: Props) {
     }
   }
 
-  const phaseButtons = legal.filter((a) =>
-    [
+  const phaseButtons = legal.filter((a) => {
+    if (a.type === 'PORTAL_FINISH' && darklightPending) return false
+    return [
       'SKIP_DRAW',
       'SKIP_MAIN',
       'SKIP_MOVE',
@@ -906,8 +1096,8 @@ export function Board({ state, onChange, onNewGame }: Props) {
       'SOUND_WAVE_FINISH',
       'BEGIN_KEYSTONE',
       'KEYSTONE_CANCEL',
-    ].includes(a.type),
-  )
+    ].includes(a.type)
+  })
 
   const viewingDiscard = discardView !== null ? state.players[discardView] : null
   const trickeryPending = state.pending?.kind === 'trickery' ? state.pending : null
@@ -1012,6 +1202,29 @@ export function Board({ state, onChange, onNewGame }: Props) {
               {monsterAbilities(active.field[sel.slot]!).find((a) => a.id === sel.abilityId)?.name}.
               <button type="button" className="linkish" onClick={() => setSel({ kind: 'none' })}>
                 cancel
+              </button>
+            </p>
+          </div>
+        )}
+
+        {sel.kind === 'discardPlay' && darklightPending && (
+          <div className="ability-choice">
+            <p className="muted">
+              Resolve{' '}
+              {(() => {
+                const card = active.discard[sel.discardIndex]
+                return card ? getCard(card.defId).name : 'this card'
+              })()}{' '}
+              as if you played it from your hand.
+              <button
+                type="button"
+                className="linkish"
+                onClick={() => {
+                  setDarklightPick(sel.discardIndex)
+                  setSel({ kind: 'none' })
+                }}
+              >
+                choose another card
               </button>
             </p>
           </div>
@@ -1280,6 +1493,7 @@ export function Board({ state, onChange, onNewGame }: Props) {
                 (a.type === 'PLAY_MONSTER' ||
                   a.type === 'PLAY_EFFECT' ||
                   a.type === 'PLAY_EQUIPMENT') &&
+                !a.fromDiscard &&
                 a.handIndex === handIndex,
             )
             const selected = sel.kind === 'hand' && sel.handIndex === handIndex
@@ -1297,7 +1511,8 @@ export function Board({ state, onChange, onNewGame }: Props) {
                     (a) =>
                       a.type === 'PLAY_EFFECT' &&
                       a.handIndex === handIndex &&
-                      a.targets.length === 0,
+                      a.targets.length === 0 &&
+                  !a.fromDiscard,
                   )
                   if (immediate) {
                     dispatch(immediate)
@@ -1312,6 +1527,66 @@ export function Board({ state, onChange, onNewGame }: Props) {
           })}
         </div>
       </section>
+
+      {darklightModalOpen && (
+        <div className="modal-backdrop">
+          <div className="modal-panel" role="dialog" aria-label="Darklight Portal">
+            <header className="modal-header">
+              <h2>Darklight Portal</h2>
+              <div className="chip-row">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={darklightPick === null}
+                  onClick={confirmDarklightPlay}
+                >
+                  Play
+                </button>
+                {legal.some((a) => a.type === 'PORTAL_FINISH') && (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => dispatch({ type: 'PORTAL_FINISH' })}
+                  >
+                    Finish without playing
+                  </button>
+                )}
+              </div>
+            </header>
+            <p className="muted">
+              Choose one card from your discard, then press Play. It does not count as another card
+              play.
+            </p>
+            <div className="discard-grid">
+              {active.discard.map((card, discardIndex) => {
+                const def = getCard(card.defId)
+                const playable = legal.some(
+                  (a) =>
+                    (a.type === 'PLAY_MONSTER' ||
+                      a.type === 'PLAY_EFFECT' ||
+                      a.type === 'PLAY_EQUIPMENT') &&
+                    a.fromDiscard &&
+                    a.handIndex === discardIndex,
+                )
+                const selected = darklightPick === discardIndex
+                return (
+                  <button
+                    key={card.instanceId}
+                    type="button"
+                    className={`tcg-card kind-${def.kind}${selected ? ' selected' : ''}${
+                      playable ? ' playable' : ''
+                    }`}
+                    disabled={!playable && !selected}
+                    onClick={() => setDarklightPick(selected ? null : discardIndex)}
+                  >
+                    <CardFace defId={card.defId} />
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {viewingDiscard && (
         <div className="modal-backdrop" onClick={() => setDiscardView(null)} role="presentation">
@@ -1422,6 +1697,111 @@ export function Board({ state, onChange, onNewGame }: Props) {
                   <CardFace defId={card.defId} />
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {state.pending?.kind === 'bringForth' && (
+        <div className="modal-backdrop">
+          <div className="modal-panel" role="dialog" aria-label="Bring Forth the Dead">
+            <header className="modal-header">
+              <h2>Destroy a discarded card</h2>
+            </header>
+            <p className="muted">It is removed from the game, then you place a Boneling.</p>
+            <div className="discard-grid">
+              {state.players[state.pending.owner].discard.map((card) => (
+                <button
+                  key={card.instanceId}
+                  type="button"
+                  className={`tcg-card kind-${getCard(card.defId).kind}`}
+                  onClick={() => dispatch({ type: 'CATACOMB_PICK', instanceId: card.instanceId })}
+                >
+                  <CardFace defId={card.defId} />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {state.pending?.kind === 'cloudDestroy' && (
+        <div className="modal-backdrop">
+          <div className="modal-panel" role="dialog" aria-label="Cloud of Darkness">
+            <header className="modal-header">
+              <h2>Cloud of Darkness</h2>
+              <button type="button" className="primary" onClick={() => dispatch({ type: 'CLOUD_FINISH' })}>
+                Destroy {state.pending.chosenInstanceIds.length}
+              </button>
+            </header>
+            <p className="muted">Each destroyed card lets you give one monster +10 shadow damage.</p>
+            <div className="discard-grid">
+              {state.players[state.pending.owner].discard.map((card) => {
+                const selected =
+                  state.pending?.kind === 'cloudDestroy' &&
+                  state.pending.chosenInstanceIds.includes(card.instanceId)
+                return (
+                  <button
+                    key={card.instanceId}
+                    type="button"
+                    className={`tcg-card kind-${getCard(card.defId).kind}${selected ? ' selected' : ''}`}
+                    onClick={() => dispatch({ type: 'CLOUD_TOGGLE', instanceId: card.instanceId })}
+                  >
+                    <CardFace defId={card.defId} />
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {state.pending?.kind === 'riftEye' && (
+        <div className="modal-backdrop">
+          <div className="modal-panel" role="dialog" aria-label="Eye o' the Rift">
+            <header className="modal-header">
+              <h2>Eye o&apos; the Rift</h2>
+              {state.pending.stage === 'discard' && (
+                <button type="button" className="primary" onClick={() => dispatch({ type: 'RIFT_CONFIRM' })}>
+                  Put the rest back
+                </button>
+              )}
+            </header>
+            <p className="muted">
+              {state.pending.stage === 'discard'
+                ? 'Click cards to discard them. Then put the rest back in the order you choose.'
+                : 'Click the remaining cards. The first one goes on top of your deck.'}
+            </p>
+            <div className="discard-grid">
+              {state.pending.cards.map((card) => {
+                const discarded =
+                  state.pending?.kind === 'riftEye' &&
+                  state.pending.discarded.includes(card.instanceId)
+                const place =
+                  state.pending?.kind === 'riftEye' ? state.pending.order.indexOf(card.instanceId) : -1
+                const stage = state.pending?.kind === 'riftEye' ? state.pending.stage : 'discard'
+                return (
+                  <button
+                    key={card.instanceId}
+                    type="button"
+                    className={`tcg-card kind-${getCard(card.defId).kind}${
+                      discarded || place >= 0 ? ' selected' : ''
+                    }`}
+                    disabled={stage === 'order' && (discarded || place >= 0)}
+                    onClick={() =>
+                      dispatch(
+                        stage === 'discard'
+                          ? { type: 'RIFT_TOGGLE', instanceId: card.instanceId }
+                          : { type: 'RIFT_ORDER', instanceId: card.instanceId },
+                      )
+                    }
+                  >
+                    <CardFace defId={card.defId} />
+                    {discarded && stage === 'discard' && <span className="pile-hint">Discard</span>}
+                    {place >= 0 && <span className="pile-hint">{place === 0 ? 'Top' : `Next ${place}`}</span>}
+                  </button>
+                )
+              })}
             </div>
           </div>
         </div>
@@ -1756,7 +2136,7 @@ function PlayerRow({
           className="field-row"
           style={{
             gridTemplateColumns: `repeat(${
-              game.pending?.kind === 'placeWeed' &&
+              (game.pending?.kind === 'placeWeed' || game.pending?.kind === 'placeBoneling') &&
               game.pending.owner === player.id &&
               player.field.every((occupant) => occupant !== null)
                 ? player.field.length + 1
@@ -1764,7 +2144,7 @@ function PlayerRow({
             }, minmax(132px, 1fr))`,
           }}
         >
-          {(game.pending?.kind === 'placeWeed' &&
+          {((game.pending?.kind === 'placeWeed' || game.pending?.kind === 'placeBoneling') &&
           game.pending.owner === player.id &&
           player.field.every((occupant) => occupant !== null)
             ? [...player.field, null]

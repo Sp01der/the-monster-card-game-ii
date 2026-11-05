@@ -8,6 +8,7 @@ import {
   hasDarkCharge,
   hasGoldAffinity,
   isBlobMonster,
+  isBoneling,
   isFireMonster,
   isOrcOrGoblin,
   isPlant,
@@ -22,6 +23,7 @@ import {
   goldPayments,
   emptySlots,
   isDamageProtected,
+  isClinged,
   isFrozen,
   isGooed,
   monsterAt,
@@ -37,10 +39,10 @@ import {
   withHostEquipment,
   withoutProtected,
 } from './targeting'
-import type { AbilityChoice, AbilityDef, GameAction, GameState, PlayerState } from './types'
+import type { AbilityChoice, AbilityDef, GameAction, GameState, PlayerState, Stance, TargetRef } from './types'
 
 function canChangeStance(monster: NonNullable<PlayerState['field'][number]>): boolean {
-  return !isGooed(monster) && !monster.statuses.some((s) => s.kind === 'cling')
+  return !isGooed(monster) && !isClinged(monster)
 }
 
 const DAMAGE_SPECIALS = new Set([
@@ -88,6 +90,8 @@ function noTargetEffect(effectId: string): boolean {
     'famine',
     'treasureHoard',
     'magicFertilizer',
+    'darklightPortal',
+    'eyeOfTheRift',
   ].includes(effectId)
 }
 
@@ -136,30 +140,62 @@ function expandGoldPayments(state: GameState, actions: GameAction[]): GameAction
   return expanded
 }
 
-function listHandPlayActions(state: GameState, player: PlayerState): GameAction[] {
+function playStances(defId: string): Stance[] {
+  return isBoneling(defId) ? ['active'] : ['active', 'withdrawn']
+}
+
+function listPilePlayActions(
+  state: GameState,
+  player: PlayerState,
+  pile: 'hand' | 'discard',
+): GameAction[] {
+  const cards = pile === 'hand' ? player.hand : player.discard
+  const fromDiscard = pile === 'discard'
   const actions: GameAction[] = []
-  for (let handIndex = 0; handIndex < player.hand.length; handIndex++) {
-    const card = player.hand[handIndex]
+  for (let handIndex = 0; handIndex < cards.length; handIndex++) {
+    const card = cards[handIndex]
     const def = getCard(card.defId)
     if (def.kind === 'monster') {
       if (emptySlots(player).length === 0) continue
       for (const slot of emptySlots(player)) {
-        actions.push({ type: 'PLAY_MONSTER', handIndex, slot, stance: 'active' })
-        actions.push({ type: 'PLAY_MONSTER', handIndex, slot, stance: 'withdrawn' })
+        for (const stance of playStances(def.id)) {
+          actions.push({
+            type: 'PLAY_MONSTER',
+            handIndex,
+            slot,
+            stance,
+            ...(fromDiscard ? { fromDiscard: true } : {}),
+          })
+        }
       }
     } else if (def.kind === 'effect') {
       if (noTargetEffect(def.effectId)) {
-        actions.push({ type: 'PLAY_EFFECT', handIndex, targets: [] })
+        actions.push({
+          type: 'PLAY_EFFECT',
+          handIndex,
+          targets: [],
+          ...(fromDiscard ? { fromDiscard: true } : {}),
+        })
         continue
       }
       for (const targets of effectTargetOptions(state, def.effectId)) {
-        actions.push({ type: 'PLAY_EFFECT', handIndex, targets })
+        actions.push({
+          type: 'PLAY_EFFECT',
+          handIndex,
+          targets,
+          ...(fromDiscard ? { fromDiscard: true } : {}),
+        })
       }
     } else if (def.kind === 'equipment') {
       for (let slot = 0; slot < player.field.length; slot++) {
         const monster = monsterAt(player, slot)
         if (monster && !monster.equipment.some((e) => e.defId === def.id)) {
-          actions.push({ type: 'PLAY_EQUIPMENT', handIndex, slot })
+          actions.push({
+            type: 'PLAY_EQUIPMENT',
+            handIndex,
+            slot,
+            ...(fromDiscard ? { fromDiscard: true } : {}),
+          })
         }
       }
     }
@@ -167,7 +203,90 @@ function listHandPlayActions(state: GameState, player: PlayerState): GameAction[
   return actions
 }
 
+function listHandPlayActions(state: GameState, player: PlayerState): GameAction[] {
+  return listPilePlayActions(state, player, 'hand')
+}
+
 export function listLegalActions(state: GameState): GameAction[] {
+  return expandGoldPayments(state, restrictBonelingTargets(state, collectLegalActions(state)))
+}
+
+function actionTargetList(action: GameAction): TargetRef[] {
+  switch (action.type) {
+    case 'USE_ABILITY':
+      return [...(action.target ? [action.target] : []), ...(action.targets ?? [])]
+    case 'PLAY_EFFECT':
+      return action.targets
+    case 'PENDING_TARGET':
+    case 'PLASMA_FIRE':
+    case 'SOUND_WAVE_TARGET':
+    case 'FAIRY_HEAL':
+    case 'FREEZE_TARGET':
+    case 'RAIN_GOO_TARGET':
+    case 'CLOUD_BLESS':
+      return [action.target]
+    default:
+      return []
+  }
+}
+
+const ANY_CARD_EFFECT_IDS = new Set([
+  'heal_30',
+  'damage_20_any',
+  'anvil',
+  'energy_3',
+  'rally',
+])
+
+const ANY_CARD_SPECIALS = new Set([
+  'downpour',
+  'healingHands',
+  'gale',
+  'tailGale',
+])
+
+/** Ranged and any-card attacks ignore Boneling target locks. */
+function ignoresBonelingLock(state: GameState, action: GameAction): boolean {
+  const actor = activePlayer(state).id
+  if (action.type === 'USE_ABILITY') {
+    const monster = state.players[actor].field[action.slot]
+    if (!monster) return false
+    const ability = monsterAbilities(monster).find((a) => a.id === action.abilityId)
+    if (!ability) return false
+    if (ability.ranged || ability.targetMode === 'anyMonster') return true
+    return ANY_CARD_SPECIALS.has(ability.special ?? '')
+  }
+  if (action.type === 'PLAY_EFFECT') {
+    const pile = action.fromDiscard ? state.players[actor].discard : state.players[actor].hand
+    const card = pile[action.handIndex]
+    if (!card) return false
+    const def = getCard(card.defId)
+    return def.kind === 'effect' && ANY_CARD_EFFECT_IDS.has(def.effectId)
+  }
+  if (action.type === 'PENDING_TARGET') {
+    const pending = state.pending
+    return pending?.kind === 'multiHit' && pending.scope === 'any'
+  }
+  if (action.type === 'FAIRY_HEAL') return true
+  return false
+}
+
+/** While you control a Boneling, your opponent can only choose those Bonelings. */
+function restrictBonelingTargets(state: GameState, actions: GameAction[]): GameAction[] {
+  const actor = activePlayer(state).id
+  return actions.filter((action) => {
+    if (ignoresBonelingLock(state, action)) return true
+    return actionTargetList(action).every((target) => {
+      if (target.player === actor) return true
+      const side = state.players[target.player]
+      if (!side.field.some((monster) => monster && isBoneling(monster.defId))) return true
+      const host = side.field[target.slot]
+      return Boolean(host && isBoneling(host.defId))
+    })
+  })
+}
+
+function collectLegalActions(state: GameState): GameAction[] {
   if (state.winner !== null) return []
   if (state.pending) {
     const pending = state.pending
@@ -443,7 +562,12 @@ export function listLegalActions(state: GameState): GameAction[] {
       return actions
     }
     if (pending.kind === 'playCards') {
-      return [...listHandPlayActions(state, state.players[pending.owner]), { type: 'PORTAL_FINISH' }]
+      const owner = state.players[pending.owner]
+      if (pending.from === 'discard') {
+        const plays = listPilePlayActions(state, owner, 'discard')
+        return [...plays, { type: 'PORTAL_FINISH' }]
+      }
+      return [...listHandPlayActions(state, owner), { type: 'PORTAL_FINISH' }]
     }
     if (pending.kind === 'fairyHeal') {
       return anyCardTargets(state).map((target) => ({ type: 'FAIRY_HEAL' as const, target }))
@@ -459,6 +583,44 @@ export function listLegalActions(state: GameState): GameAction[] {
       }
       return result
     }
+    if (pending.kind === 'placeBoneling') {
+      const owner = state.players[pending.owner]
+      const open = emptySlots(owner)
+      const slots = open.length > 0 ? open : [owner.field.length]
+      return slots.map((slot) => ({ type: 'PLACE_BONELING' as const, slot }))
+    }
+    if (pending.kind === 'bringForth') {
+      return state.players[pending.owner].discard.map((card) => ({
+        type: 'CATACOMB_PICK' as const,
+        instanceId: card.instanceId,
+      }))
+    }
+    if (pending.kind === 'cloudDestroy') {
+      const owner = state.players[pending.owner]
+      const actions: GameAction[] = [{ type: 'CLOUD_FINISH' }]
+      for (const card of owner.discard) {
+        actions.push({ type: 'CLOUD_TOGGLE', instanceId: card.instanceId })
+      }
+      return actions
+    }
+    if (pending.kind === 'cloudBless') {
+      return anyMonsterTargets(state).map((target) => ({ type: 'CLOUD_BLESS' as const, target }))
+    }
+    if (pending.kind === 'riftEye') {
+      if (pending.stage === 'discard') {
+        const actions: GameAction[] = [{ type: 'RIFT_CONFIRM' }]
+        for (const card of pending.cards) {
+          actions.push({ type: 'RIFT_TOGGLE', instanceId: card.instanceId })
+        }
+        return actions
+      }
+      return pending.cards
+        .filter(
+          (card) =>
+            !pending.discarded.includes(card.instanceId) && !pending.order.includes(card.instanceId),
+        )
+        .map((card) => ({ type: 'RIFT_ORDER' as const, instanceId: card.instanceId }))
+    }
   }
   if (state.awaitingHandoff) return [{ type: 'CONFIRM_HANDOFF' }]
 
@@ -471,7 +633,7 @@ export function listLegalActions(state: GameState): GameAction[] {
     if (m && isGooed(m) && m.energy >= 1) {
       actions.push({ type: 'UNGOO', slot })
     }
-    if (m?.statuses.some((s) => s.kind === 'cling') && m.energy >= 1) {
+    if (m && isClinged(m) && m.energy >= 1) {
       actions.push({ type: 'RESIST_CLING', slot })
     }
   }
@@ -490,8 +652,9 @@ export function listLegalActions(state: GameState): GameAction[] {
           const def = getCard(card.defId)
           if (def.kind !== 'monster') continue
           for (const slot of emptySlots(player)) {
-            actions.push({ type: 'PLAY_MONSTER', handIndex, slot, stance: 'active' })
-            actions.push({ type: 'PLAY_MONSTER', handIndex, slot, stance: 'withdrawn' })
+            for (const stance of playStances(def.id)) {
+              actions.push({ type: 'PLAY_MONSTER', handIndex, slot, stance })
+            }
           }
         }
         if (state.playedCardThisTurn) {
@@ -684,8 +847,14 @@ export function listLegalActions(state: GameState): GameAction[] {
           if (
             ability.special === 'relentless' ||
             ability.special === 'attack' ||
-            ability.special === 'drawTwo'
+            ability.special === 'drawTwo' ||
+            ability.special === 'summonBonelings'
           ) {
+            actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id })
+            continue
+          }
+          if (ability.special === 'bringForthTheDead' || ability.special === 'cloudOfDarkness') {
+            if (player.discard.length === 0) continue
             actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id })
             continue
           }
@@ -898,9 +1067,9 @@ export function listLegalActions(state: GameState): GameAction[] {
       if (!state.movedThisTurn) {
         for (let slot = 0; slot < player.field.length; slot++) {
           const m = monsterAt(player, slot)
-          if (!m || isGooed(m) || m.statuses.some((s) => s.kind === 'cling')) continue
-          if (m.stance === 'active') actions.push({ type: 'WITHDRAW', slot })
-          else actions.push({ type: 'ADVANCE', slot })
+          if (!m || isGooed(m) || isClinged(m)) continue
+          if (m.stance === 'withdrawn') actions.push({ type: 'ADVANCE', slot })
+          else if (!isBoneling(m.defId)) actions.push({ type: 'WITHDRAW', slot })
         }
       }
       actions.push({ type: 'SKIP_MOVE' })
@@ -933,7 +1102,7 @@ export function listLegalActions(state: GameState): GameAction[] {
     }
   }
 
-  return expandGoldPayments(state, actions)
+  return actions
 }
 
 const UNDOABLE_PHASE_ACTIONS = new Set<GameAction['type']>([

@@ -615,7 +615,7 @@ export const CATALOG: Record<string, CardDef> = {
       { id: 'iron_fists', name: 'Iron Fists', cost: parseCost('0+'),
         effects: [{ type: 'damage', amount: 20 }] },
       { id: 'archers_of_the_keep', name: 'Archers of the Keep', cost: parseCost('0++'),
-        special: 'archersKeep', effects: [] },
+        ranged: true, special: 'archersKeep', effects: [] },
       { id: 'treasure_keepers', name: 'Treasure Keepers', cost: parseCost('0'),
         special: 'treasureKeepers', effects: [] },
     ],
@@ -744,7 +744,7 @@ export const CATALOG: Record<string, CardDef> = {
         effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: [1, 2, 3] }] },
       { id: 'improvised_weapon', name: 'Improvised Weapon', cost: parseCost('0+'),
         effects: [{ type: 'damage', amount: 40 }] },
-      { id: 'relentless', name: 'Relentless', cost: parseCost('++'), special: 'relentless', effects: [] },
+      { id: 'relentless', name: 'Relentless', cost: parseCost('++'), free: true, special: 'relentless', effects: [] },
     ],
   },
   unending_bannerman: {
@@ -776,6 +776,36 @@ export const CATALOG: Record<string, CardDef> = {
           { type: 'status', status: 'poison', turns: 1 },
         ] },
       { id: 'tail_gale', name: 'Tail Gale', cost: parseCost('++'), special: 'tailGale', effects: [] },
+    ],
+  },
+  boneling: {
+    kind: 'monster', id: 'boneling', name: 'Boneling', points: 0, maxHp: 30,
+    darkCharge: true,
+    passiveText:
+      'While you control a Boneling, your opponent can only target your Bonelings (ranged and any-card attacks ignore this). A Boneling cannot withdraw; if it would, it dies instead.',
+    abilities: [
+      { id: 'hollow_scratch', name: 'Hollow Scratch', cost: parseCost('0'),
+        effects: [{ type: 'damage', amount: 20, damageType: 'shadow' }] },
+    ],
+  },
+  keeper_of_the_catacombs: {
+    kind: 'monster', id: 'keeper_of_the_catacombs', name: 'Keeper of the Catacombs', points: 2, maxHp: 100,
+    darkCharge: true,
+    abilities: [
+      { id: 'bring_forth_the_dead', name: 'Bring Forth the Dead', cost: parseCost('0'),
+        special: 'bringForthTheDead', effects: [] },
+    ],
+  },
+  skeleton_mage: {
+    kind: 'monster', id: 'skeleton_mage', name: 'Skeleton Mage', points: 3, maxHp: 100,
+    darkCharge: true,
+    abilities: [
+      { id: 'anti_heal', name: 'Anti-heal', cost: parseCost('+'), ranged: true,
+        effects: [{ type: 'damage', amount: 30, damageType: 'shadow', piercing: true }] },
+      { id: 'summon_bonelings', name: 'Summon Bonelings', cost: parseCost('+++'),
+        special: 'summonBonelings', effects: [] },
+      { id: 'cloud_of_darkness', name: 'Cloud of Darkness', cost: parseCost('0'),
+        special: 'cloudOfDarkness', effects: [] },
     ],
   },
   health_potion: {
@@ -846,6 +876,15 @@ export const CATALOG: Record<string, CardDef> = {
   },
   famine: {
     kind: 'effect', id: 'famine', name: 'Famine', effectId: 'famine',
+  },
+  darklight_portal: {
+    kind: 'effect', id: 'darklight_portal', name: 'Darklight Portal', effectId: 'darklightPortal',
+  },
+  runestone_fires: {
+    kind: 'effect', id: 'runestone_fires', name: 'Runestone Fires', effectId: 'runestoneFires',
+  },
+  eye_of_the_rift: {
+    kind: 'effect', id: 'eye_of_the_rift', name: "Eye o' the Rift", effectId: 'eyeOfTheRift',
   },
   thunder_core: {
     kind: 'monster', id: 'thunder_core', name: 'Thunder Core', points: 2, maxHp: 80,
@@ -955,7 +994,7 @@ export const CATALOG: Record<string, CardDef> = {
     weaknesses: ['blast', 'ice'], defense: 2,
     abilities: [
       { id: 'elder_punch', name: 'Elder Punch', cost: parseCost('++'),
-        effects: [{ type: 'damage', amount: 20 }] },
+        effects: [{ type: 'damage', amount: 20, damageType: 'earth' }] },
       { id: 'elders_eye', name: "Elder's Eye", cost: parseCost('000'),
         special: 'eldersEye', effects: [] },
     ],
@@ -1070,6 +1109,13 @@ export const CATALOG: Record<string, CardDef> = {
     name: 'Ruby Ring',
     maxHp: 20,
     equipmentId: 'ruby_ring',
+  },
+  saphire_ring: {
+    kind: 'equipment',
+    id: 'saphire_ring',
+    name: 'Saphire Ring',
+    maxHp: 20,
+    equipmentId: 'saphire_ring',
   },
   shield: {
     kind: 'equipment', id: 'shield', name: 'Shield', maxHp: 30, equipmentId: 'shield',
@@ -1233,6 +1279,10 @@ export function isOrcOrGoblin(defId: string): boolean {
   return name.includes('orc') || name.includes('goblin')
 }
 
+export function isBoneling(defId: string): boolean {
+  return defId === 'boneling'
+}
+
 export function isStormling(defId: string): boolean {
   const card = getCard(defId)
   return card.kind === 'monster' && card.families?.includes('stormling') === true
@@ -1365,7 +1415,14 @@ export function countsAsElementalCard(defId: string): boolean {
   )
 }
 
-export type CardSearchType = Exclude<DamageType, 'untyped'> | 'plant' | 'woody' | 'stormling' | 'blob'
+export type CardSearchType =
+  | Exclude<DamageType, 'untyped'>
+  | 'plant'
+  | 'woody'
+  | 'stormling'
+  | 'blob'
+  | 'dark_charge'
+  | 'gold_affinity'
 
 /** Specials whose printed hit is this type even when the ability has no damage effect. */
 const SPECIAL_DAMAGE_TYPES: Record<string, Exclude<DamageType, 'untyped'>[]> = {
@@ -1395,6 +1452,7 @@ const SPECIAL_DAMAGE_TYPES: Record<string, Exclude<DamageType, 'untyped'>[]> = {
   frozenSting: ['ice'],
   chorus: ['light'],
   solarFlare: ['light'],
+  pilfer: ['shadow'],
   griefBolt: ['shadow'],
   bottleToxins: ['poison'],
   poisonGas: ['poison'],
@@ -1431,13 +1489,15 @@ function abilitySearchDamageTypes(ability: AbilityDef): Exclude<DamageType, 'unt
   return types
 }
 
-/** True when the card deals that damage type, or belongs to that family. Weakness does not count. */
+/** True when the card deals that damage type, belongs to that family, or has that trait. Weakness does not count. */
 export function cardMatchesSearchType(defId: string, type: CardSearchType): boolean {
   const card = getCard(defId)
   if (type === 'plant') return isPlant(defId)
   if (type === 'woody') return isWoody(defId)
   if (type === 'stormling') return isStormling(defId)
   if (type === 'blob') return isBlobMonster(defId)
+  if (type === 'dark_charge') return card.kind === 'monster' && card.darkCharge === true
+  if (type === 'gold_affinity') return card.kind === 'monster' && card.goldAffinity === true
   if (type === 'light' && card.kind === 'monster' && card.families?.includes('light')) return true
   if (card.kind === 'effect') return EFFECT_DAMAGE_TYPES[card.effectId]?.includes(type) === true
   if (card.kind !== 'monster') return false

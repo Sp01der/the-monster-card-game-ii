@@ -232,6 +232,18 @@ export function effectTargetOptions(state: GameState, effectId: string): TargetR
           ? [[{ kind: 'monster' as const, player: state.activePlayer, slot }]]
           : [],
       )
+    case 'runestoneFires': {
+      const yours = state.players[state.activePlayer].field.flatMap((monster, slot) =>
+        monster ? [{ kind: 'monster' as const, player: state.activePlayer, slot }] : [],
+      )
+      const pairs: TargetRef[][] = []
+      for (let i = 0; i < yours.length; i++) {
+        for (let j = 0; j < yours.length; j++) {
+          if (i !== j) pairs.push([yours[i], yours[j]])
+        }
+      }
+      return pairs
+    }
     case 'rally': {
       const monsters = anyMonsterTargets(state)
       const pairs: TargetRef[][] = []

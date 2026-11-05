@@ -99,12 +99,49 @@ export function resolveTarget(
   return { player, monster, slot: target.slot }
 }
 
+export function wearsSaphireRing(monster: FieldMonster): boolean {
+  return monster.equipment.some((equipment) => equipment.defId === 'saphire_ring')
+}
+
+const NEGATIVE_STATUSES = new Set<StatusInstance['kind']>([
+  'goo',
+  'frozen',
+  'burn',
+  'poison',
+  'wet',
+  'cling',
+  'weakened',
+])
+
 export function isFrozen(monster: FieldMonster): boolean {
+  if (wearsSaphireRing(monster)) return false
   return monster.statuses.some((s) => s.kind === 'frozen')
 }
 
 export function isGooed(monster: FieldMonster): boolean {
+  if (wearsSaphireRing(monster)) return false
   return monster.statuses.some((s) => s.kind === 'goo')
+}
+
+export function isClinged(monster: FieldMonster): boolean {
+  if (wearsSaphireRing(monster)) return false
+  return monster.statuses.some((s) => s.kind === 'cling')
+}
+
+/** Remove negative statuses from a card wearing Saphire Ring, including Cling links onto it. */
+export function clearNegativeStatuses(state: GameState, monster: FieldMonster): void {
+  if (!wearsSaphireRing(monster)) return
+  const removed = monster.statuses.some((status) => NEGATIVE_STATUSES.has(status.kind))
+  if (!removed) return
+  for (const player of state.players) {
+    for (const other of player.field) {
+      if (other?.clingTargetInstanceId === monster.instanceId) {
+        other.clingTargetInstanceId = undefined
+      }
+    }
+  }
+  monster.statuses = monster.statuses.filter((status) => !NEGATIVE_STATUSES.has(status.kind))
+  log(state, `${getMonster(monster.defId).name} is immune to negative status effects.`)
 }
 
 export function hasKeystone(monster: FieldMonster): boolean {
@@ -166,7 +203,7 @@ export function beginProtection(
 ): boolean {
   if (protector.instanceId === ward.instanceId) return false
   if (protector.stance !== 'active') {
-    if (isGooed(protector) || protector.statuses.some((status) => status.kind === 'cling')) {
+    if (isGooed(protector) || isClinged(protector)) {
       log(state, `${getMonster(protector.defId).name} cannot move in front while Gooed or Clinged.`)
       return false
     }
@@ -196,7 +233,8 @@ export function applyStatus(
   stacks = 1,
   sourceInstanceId?: string,
   skipNextTick = false,
-): void {
+): boolean {
+  if (wearsSaphireRing(monster) && NEGATIVE_STATUSES.has(kind)) return false
   const added = turns * Math.max(1, stacks)
   // Cling is a maintained link, not a duration that adds.
   if (kind === 'cling') {
@@ -204,17 +242,18 @@ export function applyStatus(
     if (existing) {
       existing.sourceInstanceId = sourceInstanceId
       existing.skipNextTick = skipNextTick
-      return
+      return true
     }
     monster.statuses.push({ kind, turns, skipNextTick, sourceInstanceId })
-    return
+    return true
   }
   const existing = monster.statuses.find((s) => s.kind === kind)
   if (existing) {
     existing.turns += added
-    return
+    return true
   }
   monster.statuses.push({ kind, turns: added, skipNextTick, sourceInstanceId })
+  return true
 }
 
 export function goldCount(monster: FieldMonster): number {
@@ -394,6 +433,12 @@ function remapPending(pending: PendingInteraction, playerId: PlayerId, removed: 
     case 'forceWithdraw':
       if (pending.player === playerId) {
         pending.slot = pending.slot === removed ? -1 : shiftSlot(pending.slot, removed)
+      }
+      break
+    case 'bringForth':
+    case 'cloudDestroy':
+      if (pending.owner === playerId) {
+        pending.sourceSlot = pending.sourceSlot === removed ? -1 : shiftSlot(pending.sourceSlot, removed)
       }
       break
     case 'bury':

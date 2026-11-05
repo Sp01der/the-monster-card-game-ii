@@ -8,7 +8,7 @@ export function formatCost(cost: EnergyCost): string {
 const ABILITY_TEXT: Record<string, string> = {
   wakkle: '20 damage',
   splat: 'Goo a target. A Gooed card cannot use abilities.',
-  elder_punch: '20 damage',
+  elder_punch: '20 earth damage',
   elders_eye: 'View the top three cards of your deck, rearrange them, and draw a card.',
   breaker_bash: '30 earth damage',
   ground_shaker: '20 earth damage to a monster and both of its circle neighbors.',
@@ -167,7 +167,7 @@ const ABILITY_TEXT: Record<string, string> = {
   ambush: 'Roll: 1–3 = 10, 4–6 = 40.',
   team_attack: 'Spear once for every Woody in play and every Woody in your hand. Each hit chooses its own target.',
   multiply: "Create a Lovni's Weed. If you have no empty slot, add one that leaves when that weed does.",
-  scent: "20 poison damage, plus 10 for each other Lovni's Weed you have in play.",
+  scent: "10 poison damage, plus 10 for each other Lovni's Weed you have in play.",
   snap_trap: '30 damage.',
   triple_chomp: 'Roll: 1–3 = 30, 4–6 = 40. Twice at 70–120 HP, three times at 130+ HP. Each chomp rolls and targets separately.',
   thornbark_stick: '10 damage. 1/6 chance of 20 instead.',
@@ -178,6 +178,13 @@ const ABILITY_TEXT: Record<string, string> = {
   poisoned_spear: '20 poison damage and Poison.',
   burning_spear: '30 fire damage and Burn. 2/6 chance this card takes 20 damage.',
   stab: '20 damage.',
+  hollow_scratch: '20 shadow damage.',
+  bring_forth_the_dead:
+    'Destroy a card in your discard and place an active Boneling. If the row is full, make a new slot.',
+  anti_heal: '30 piercing shadow damage.',
+  summon_bonelings: 'Place two active Bonelings. If the row is full, make a new slot for each.',
+  cloud_of_darkness:
+    'Destroy any number of cards in your discard. For each one, a monster in play permanently deals +10 shadow damage.',
   downpour: '10 water damage and Wet to up to three different cards.',
   gale: '30 wind damage. You may force the target to withdraw.',
   storm_command: 'One of your electric, water, or wind cards may use one more ability this turn. It does not spend the team action.',
@@ -217,6 +224,11 @@ const EFFECT_TEXT: Record<string, string> = {
   famine: 'Both you and your opponent discard a card of their choice.',
   treasureHoard: 'Gain 3 gold, or gain 1 gold and draw a card.',
   magicFertilizer: 'Each plant you control gains 1 energy.',
+  darklightPortal: 'Play one card from your discard as if you played it from your hand.',
+  runestoneFires:
+    'Set one monster you control to 0 HP. Another monster you control gains 3 energy and may take an extra ability this turn.',
+  eyeOfTheRift:
+    'Look at the top 4 cards of your deck. Discard any number of them, then put the rest back in any order.',
 }
 
 const EQUIPMENT_TEXT: Record<string, string> = {
@@ -224,6 +236,7 @@ const EQUIPMENT_TEXT: Record<string, string> = {
     "Attacks deal +10. If attached energy exceeds all energy used or required by the ability, +20 instead.",
   ruby_ring:
     'May take a free action each turn (does not spend the team action). Still only one ability per card.',
+  saphire_ring: 'The attached card is immune to negative status effects.',
   shield: 'The attached monster has +1 defence.',
   energy_crystal: 'The attached monster gains +1 energy each energy phase.',
   spear:

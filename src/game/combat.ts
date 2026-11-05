@@ -333,20 +333,23 @@ function resolveOneEffect(
       if (!target || target.kind !== 'monster') throw new Error('Status requires a monster target')
       const resolved = resolveTarget(state, target)
       if (!resolved) return target
-      applyStatus(
-        resolved.monster,
-        effect.status,
-        effect.turns,
-        effect.stacks ?? 1,
-        undefined,
-        resolved.player.id === state.activePlayer,
-      )
-      log(
-        state,
-        `${getMonster(resolved.monster.defId).name} gains ${effect.status}${
-          (effect.stacks ?? 1) > 1 ? ` x${effect.stacks}` : ''
-        }.`,
-      )
+      if (
+        applyStatus(
+          resolved.monster,
+          effect.status,
+          effect.turns,
+          effect.stacks ?? 1,
+          undefined,
+          resolved.player.id === state.activePlayer,
+        )
+      ) {
+        log(
+          state,
+          `${getMonster(resolved.monster.defId).name} gains ${effect.status}${
+            (effect.stacks ?? 1) > 1 ? ` x${effect.stacks}` : ''
+          }.`,
+        )
+      }
       return target
     }
     case 'chanceStatus': {
@@ -359,15 +362,18 @@ function resolveOneEffect(
       }
       const resolved = resolveTarget(state, target)
       if (!resolved) return target
-      applyStatus(
-        resolved.monster,
-        effect.status,
-        effect.turns,
-        1,
-        undefined,
-        resolved.player.id === state.activePlayer,
-      )
-      log(state, `${getMonster(resolved.monster.defId).name} gains ${effect.status}.`)
+      if (
+        applyStatus(
+          resolved.monster,
+          effect.status,
+          effect.turns,
+          1,
+          undefined,
+          resolved.player.id === state.activePlayer,
+        )
+      ) {
+        log(state, `${getMonster(resolved.monster.defId).name} gains ${effect.status}.`)
+      }
       return target
     }
     case 'removeSelf': {

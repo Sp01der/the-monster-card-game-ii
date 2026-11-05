@@ -65,6 +65,9 @@ export function CardFace({
           {card.families?.includes('plant') ? <span className="tag">Plant</span> : null}
           {card.families?.includes('woody') ? <span className="tag">Woody</span> : null}
           {card.families?.includes('stormling') ? <span className="tag">Stormling</span> : null}
+          {field && (field.shadowBonus ?? 0) > 0 ? (
+            <span className="tag">shadow +{field.shadowBonus}</span>
+          ) : null}
           {card.darkCharge ? <span className="tag">Dark Charge</span> : null}
           {card.goldAffinity ? <span className="tag">Gold Affinity</span> : null}
           {field && card.goldAffinity ? <span>gold {field.gold ?? 0}</span> : null}

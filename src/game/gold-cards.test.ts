@@ -84,6 +84,9 @@ describe('gold affinity cards', () => {
       goldAffinity: true,
     })
     expect(getMonster('amanesian_warden')).toMatchObject({ points: 2, maxHp: 100, goldAffinity: true })
+    expect(getMonster('amanesian_warden').abilities.find((a) => a.id === 'archers_of_the_keep')?.ranged).toBe(
+      true,
+    )
     expect(getMonster('drowned_pirate').goldAffinity).toBe(true)
     expect(getMonster('red_knight').goldAffinity).toBe(true)
     expect(getMonster('drowned_pirate').abilities.find((a) => a.id === 'lost_treasure')?.ranged).toBe(true)

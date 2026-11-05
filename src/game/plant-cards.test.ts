@@ -170,7 +170,7 @@ describe('plant cards', () => {
     put(state.players[1], 1, 'lovnis_weed', { stance: 'withdrawn' })
     put(state.players[1], 2, 'lovnis_weed', { stance: 'withdrawn' })
     const next = use(state, 'scent', (candidate) => candidate.type === 'USE_ABILITY' && candidate.target?.slot === 0)
-    expect(next.players[1].field[0]?.hp).toBe(60)
+    expect(next.players[1].field[0]?.hp).toBe(70)
   })
 
   it('places a weed in an empty slot, and drops an extra slot when that weed leaves', () => {
