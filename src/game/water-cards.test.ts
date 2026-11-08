@@ -65,7 +65,7 @@ function card(instanceId: string, defId: string): HandCard {
 }
 
 describe('water card catalog', () => {
-  it('defines the requested stats, flags, and low-face rolls', () => {
+  it('defines the requested stats, flags, and high-face rolls', () => {
     expect(getMonster('fisher_mirel')).toMatchObject({ points: 2, maxHp: 80 })
     expect(getMonster('drowned_pirate')).toMatchObject({ weakness: 'light' })
     expect(getMonster('hydro_core')).toMatchObject({ weakness: 'ice' })
@@ -79,7 +79,7 @@ describe('water card catalog', () => {
     const pirate = getMonster('drowned_pirate')
     expect(pirate.abilities.find((a) => a.id === 'sunken_plunder')?.ranged).toBe(true)
     const snap = getMonster('blubis_eel').abilities.find((a) => a.id === 'snap')
-    expect(snap?.effects[0]).toMatchObject({ successFaces: [1, 2] })
+    expect(snap?.effects[0]).toMatchObject({ successFaces: [5, 6] })
   })
 })
 

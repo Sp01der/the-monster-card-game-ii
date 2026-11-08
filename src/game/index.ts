@@ -6,6 +6,7 @@ export {
   getMonster,
   getWeaknesses,
   grantedAbilities,
+  identityDefId,
   monsterAbilities,
   parseCost,
   hasFireOrBlastAttack,
@@ -21,10 +22,29 @@ export {
   countsAsElectricCard,
   countElectricCardsInPlay,
 } from './catalog'
-export { computeDamage, guardingGoldDefense, roundToNearest10, getAdjacentSlots, getAdjacentTargets, getCircleAdjacent } from './damage'
+export {
+  computeDamage,
+  guardingGoldDefense,
+  printedAttackBonus,
+  roundToNearest10,
+  getAdjacentSlots,
+  getAdjacentTargets,
+  getCircleAdjacent,
+} from './damage'
 export { applyAction } from './reducer'
 export { createGame, sampleDeck, shuffleWith } from './setup'
 export type { DeckSetup } from './setup'
 export type { CardSearchType } from './catalog'
 export type * from './types'
 export { FIELD_SIZE, STARTING_HAND, STARTING_POINTS } from './types'
+export {
+  chooseAction,
+  decisionPlayer,
+  applyBelief,
+  evaluate,
+  pruneActions,
+  createDieRng,
+  createFloatRng,
+  mixSeed,
+} from './ai'
+export type { ChooseOptions, DeckLists } from './ai'

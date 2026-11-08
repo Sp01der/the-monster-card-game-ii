@@ -3,9 +3,11 @@ import {
   computeDamage,
   getAdjacentSlots,
   getAdjacentTargets,
+  prismHarmFaces,
   prismSuccessFaces,
   roundToNearest10,
 } from './damage'
+import { highFaces, lowFaces } from './dice'
 import type { FieldMonster } from './types'
 
 function mon(partial: Partial<FieldMonster> & { defId: string }): FieldMonster {
@@ -193,9 +195,14 @@ describe('computeDamage', () => {
       defId: 'blob',
       equipment: [{ instanceId: 'l', defId: 'prism_lens', hp: 20, maxHp: 20 }],
     })
+    expect(highFaces(4)).toEqual([3, 4, 5, 6])
+    expect(lowFaces(3)).toEqual([1, 2, 3])
+    expect(prismSuccessFaces(lens, [4, 5, 6])).toEqual([4, 5, 6, 3])
     expect(prismSuccessFaces(lens, [2, 3, 4, 5, 6])).toEqual([2, 3, 4, 5, 6, 1])
     expect(prismSuccessFaces(lens, [1, 2, 3, 4, 5, 6])).toEqual([1, 2, 3, 4, 5, 6])
-    expect(prismSuccessFaces(mon({ defId: 'blob' }), [1, 2, 3])).toEqual([1, 2, 3])
+    expect(prismSuccessFaces(mon({ defId: 'blob' }), [4, 5, 6])).toEqual([4, 5, 6])
+    expect(prismHarmFaces(lens, [1, 2])).toEqual([1, 2, 3])
+    expect(prismHarmFaces(mon({ defId: 'blob' }), [1, 2])).toEqual([1, 2])
   })
 })
 

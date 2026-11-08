@@ -106,6 +106,26 @@ export const STARTERS: StarterDeck[] = [
       shield: 1,
     },
   ),
+  starter(
+    'foundry',
+    'Foundry',
+    'Constructs, Breakers, and Anvils — sticky bodies the AI can pilot.',
+    'breaker',
+    {
+      breaker: 2,
+      construct: 2,
+      rusted_construct: 2,
+      supply_construct: 2,
+      deci_construct: 2,
+      molika: 2,
+      coffee: 2,
+      health_potion: 2,
+      falling_anvil: 2,
+      sword: 2,
+      shield: 2,
+      energy_crystal: 2,
+    },
+  ),
 ]
 
 export const DEFAULT_STARTER_IDS = ['ember', 'frost'] as const

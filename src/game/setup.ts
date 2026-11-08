@@ -125,11 +125,25 @@ export function createGame(
     message: `Game start. ${state.players[0].name} goes first.`,
   })
   if (state.awaitingHandoff) {
+    state.openingMulligan = { decided: [false, false], revealed: false }
     state.log.push({ message: `Pass the device to ${state.players[0].name}.` })
   }
 
   void shuffle
   return state
+}
+
+/**
+ * Replace every opening-hand card except the top monster.
+ * The new cards are drawn first. The cards they replace are shuffled into the deck afterward.
+ */
+export function redrawOpeningHand(state: GameState, playerId: PlayerId): void {
+  const player = state.players[playerId]
+  const [top, ...replaced] = player.hand
+  if (!top) return
+  const drawn = player.deck.splice(0, replaced.length)
+  player.hand = [top, ...drawn]
+  player.deck = shuffleWith([...player.deck, ...replaced], state.random)
 }
 
 /** Ember starter, for quick playtests and older callers. */

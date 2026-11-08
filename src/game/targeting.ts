@@ -201,11 +201,15 @@ export function anyMonsterTargets(state: GameState): TargetRef[] {
 }
 
 export function effectTargetOptions(state: GameState, effectId: string): TargetRef[][] {
+  const actorId =
+    state.pending?.kind === 'playCards' || state.pending?.kind === 'replayEffect'
+      ? state.pending.owner
+      : state.activePlayer
   switch (effectId) {
     case 'whirlpool':
       return withHostEquipment(
         state,
-        withoutProtected(state, normalAttackTargets(state, state.activePlayer)),
+        withoutProtected(state, normalAttackTargets(state, actorId)),
       ).map((t) => [t])
     case 'heal_30':
       return anyCardTargets(state).map((t) => [t])
@@ -219,22 +223,22 @@ export function effectTargetOptions(state: GameState, effectId: string): TargetR
         state,
         withoutProtected(
           state,
-          state.players[otherPlayer(state.activePlayer)].field.flatMap((monster, slot) =>
+          state.players[otherPlayer(actorId)].field.flatMap((monster, slot) =>
             monster
-              ? [{ kind: 'monster' as const, player: otherPlayer(state.activePlayer), slot }]
+              ? [{ kind: 'monster' as const, player: otherPlayer(actorId), slot }]
               : [],
           ),
         ),
       ).map((target) => [target])
     case 'empower':
-      return state.players[state.activePlayer].field.flatMap((monster, slot) =>
+      return state.players[actorId].field.flatMap((monster, slot) =>
         monster
-          ? [[{ kind: 'monster' as const, player: state.activePlayer, slot }]]
+          ? [[{ kind: 'monster' as const, player: actorId, slot }]]
           : [],
       )
     case 'runestoneFires': {
-      const yours = state.players[state.activePlayer].field.flatMap((monster, slot) =>
-        monster ? [{ kind: 'monster' as const, player: state.activePlayer, slot }] : [],
+      const yours = state.players[actorId].field.flatMap((monster, slot) =>
+        monster ? [{ kind: 'monster' as const, player: actorId, slot }] : [],
       )
       const pairs: TargetRef[][] = []
       for (let i = 0; i < yours.length; i++) {
@@ -251,6 +255,20 @@ export function effectTargetOptions(state: GameState, effectId: string): TargetR
         for (let j = i + 1; j < monsters.length; j++) {
           pairs.push([monsters[i], monsters[j]])
         }
+      }
+      return pairs
+    }
+    case 'rewind':
+      return anyCardTargets(state).map((target) => [target])
+    case 'inversion': {
+      const pairs: TargetRef[][] = []
+      const length = Math.max(state.players[0].field.length, state.players[1].field.length)
+      for (let slot = 0; slot < length; slot++) {
+        if (!state.players[0].field[slot] || !state.players[1].field[slot]) continue
+        pairs.push([
+          { kind: 'monster', player: 0, slot },
+          { kind: 'monster', player: 1, slot },
+        ])
       }
       return pairs
     }

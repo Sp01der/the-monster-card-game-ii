@@ -1,5 +1,6 @@
-import { formatDamageType, getCard, getWeaknesses } from '../game/catalog'
-import type { AbilityDef, CardDef, EnergyCost } from '../game/types'
+import { formatDamageType, getCard, getWeaknesses, monsterAbilities } from '../game/catalog'
+import { lifestealRequire, printedAttackBonus, wearsLifestealBlade } from '../game/damage'
+import type { AbilityDef, CardDef, EnergyCost, FieldMonster } from '../game/types'
 
 export function formatCost(cost: EnergyCost): string {
   return `${'0'.repeat(cost.require)}${'+'.repeat(cost.spend)}` || '—'
@@ -176,9 +177,11 @@ const ABILITY_TEXT: Record<string, string> = {
   vine_whip: '20 damage to a withdrawn card, then it advances. Does not spend your move.',
   thorn: '30 damage.',
   poisoned_spear: '20 poison damage and Poison.',
-  burning_spear: '30 fire damage and Burn. 2/6 chance this card takes 20 damage.',
+  burning_spear: '30 fire damage and Burn. On a 1–2, this card takes 20 damage.',
   stab: '20 damage.',
   hollow_scratch: '20 shadow damage.',
+  shapeshift:
+    'Choose a monster card worth 3 points or less in the match. This card gains its abilities, passives, weaknesses, and attributes. Its name, 110 HP, energy, equipment, statuses, and 3 points stay.',
   bring_forth_the_dead:
     'Destroy a card in your discard and place an active Boneling. If the row is full, make a new slot.',
   anti_heal: '30 piercing shadow damage.',
@@ -198,6 +201,14 @@ const ABILITY_TEXT: Record<string, string> = {
   magic_music: '20 sonic damage, twice. Each hit chooses its own target.',
   serpents_fang: '20 poison damage and Poison for 1 turn.',
   tail_gale: '30 damage and withdraw the target.',
+  raid: '30 damage and gain 1 gold if the target took damage.',
+  treblae_shot: '50 damage.',
+  speaker_rally: "Choose two other monster cards, which gain 1 energy each. Activate this card's passive.",
+  uprising: 'Play any number of monster cards from your hand. They enter with 1 energy attached.',
+  slash: '20 damage.',
+  veridian_fires: "Lower this card's HP by 10 any number of times. Add 20 damage for each HP lost.",
+  veridian_bloodcraft: 'Lose 20 HP to create an equipment card and attach it to this card.',
+  spell_casting: 'Find the top effect in your deck and add it to hand. You may play an effect for free.',
 }
 
 const EFFECT_TEXT: Record<string, string> = {
@@ -207,7 +218,7 @@ const EFFECT_TEXT: Record<string, string> = {
   anvil: '4/6 chance of 40 damage to any card.',
   rally: 'Give two cards 1 energy each.',
   stormBolts:
-    'Each enemy monster: 4/6 for 30 electric. Each friendly monster: 3/6 for 20 electric.',
+    'Each enemy monster: 4/6 (3–6) for 30 electric. Each friendly monster: 3/6 (1–3) for 20 electric.',
   rainOfGoo: 'Play any number of Blob cards, or Goo three distinct monsters.',
   whirlpool: 'Bury any number of cards; deal 20 water damage per card.',
   churnWaters: 'Bury any number of cards, then draw that many.',
@@ -229,6 +240,18 @@ const EFFECT_TEXT: Record<string, string> = {
     'Set one monster you control to 0 HP. Another monster you control gains 3 energy and may take an extra ability this turn.',
   eyeOfTheRift:
     'Look at the top 4 cards of your deck. Discard any number of them, then put the rest back in any order.',
+  goldenDie: 'Choose the outcome of the next die roll when it occurs.',
+  timeWarp: 'Lose 1 point. After this turn ends, take an additional turn.',
+  inversion:
+    'Two monsters opposite each other swap places and owners. Energy and equipment stay on the original side.',
+  recursion:
+    'This does not use your card play. After the next effect you play finishes, that effect is immediately played again.',
+  mirrorPact:
+    'Choose any card in the match. Your opponent may play a fresh copy for free. For each opponent who does, you may play a fresh copy for free.',
+  rewind:
+    'Ethereal. Remember a card in play. On your turn, discard a card and destroy Rewind to return that card to the remembered state. Points stay as they are.',
+  hauntedMists:
+    'Ethereal. Destroy a card in your discard pile. While this card is in play, no cards may target cards belonging to their opponent. This card remains in play until the beginning of your next turn.',
 }
 
 const EQUIPMENT_TEXT: Record<string, string> = {
@@ -248,6 +271,10 @@ const EQUIPMENT_TEXT: Record<string, string> = {
     "The attached card's abilities have +1/6 chance to succeed and are illuminated.",
   colossusKeystone:
     'Cannot be destroyed. Only a Colossus can hold it. The attached card gains +1 energy each energy phase. Created by destroying 3 cards in your hand.',
+  pegasusGift:
+    'The attached card may withdraw or advance for free once per turn, either at the beginning of the main phase, or during the withdraw/advance phase.',
+  lifestealBlade:
+    "The attached card's abilities require an additional 0. Their attacks deal +10 damage. Each time the attached card deals damage to a card it heals 10 HP.",
 }
 
 /** Ember Tortoise Chomp differs from Snapatrap Chomp. */
@@ -317,6 +344,75 @@ export type AbilityLine = {
   body: string
   upgradeCost?: EnergyCost
   upgradeText?: string
+}
+
+/** Raise printed damage numbers by flat attack bonuses (Sword, Cloud of Darkness, etc.). */
+export function boostPrintedDamage(text: string, bonus: number): string {
+  if (bonus <= 0 || !text) return text
+  const add = (n: number) => String(n + bonus)
+  return text.replace(/\d+/g, (match, offset, full) => {
+    const value = Number(match)
+    const before = full.slice(Math.max(0, offset - 28), offset)
+    const after = full.slice(offset + match.length)
+    if (/this card takes\s*$/i.test(before)) return match
+    if (/takes\s*$/i.test(before) && /^ damage\b/i.test(after)) return add(value)
+    if (/^ (?:piercing )?(?:\w+ )?damage\b/i.test(after) && !/takes\s*$/i.test(before)) {
+      return add(value)
+    }
+    if (/chance of\s*$/i.test(before) && /^ instead\b/i.test(after)) return add(value)
+    if (/=\s*$/.test(before)) return add(value)
+    if (/Each hit is \+$/i.test(before)) return add(value)
+    if (
+      /^ (?:fire|water|ice|poison|electric|light|sonic|blast|shadow|wind|earth)(?:\.|\s+to\b|\s+\+)/i.test(
+        after,
+      )
+    ) {
+      return add(value)
+    }
+    return match
+  })
+}
+
+function abilityLooksShadow(ability: AbilityDef | undefined, body: string): boolean {
+  if (/\bshadow\b/i.test(body)) return true
+  if (!ability) return false
+  if (ability.special === 'pilfer') return true
+  return ability.effects.some(
+    (effect) =>
+      (effect.type === 'damage' ||
+        effect.type === 'rollDamage' ||
+        effect.type === 'chanceBoostDamage') &&
+      effect.damageType === 'shadow',
+  )
+}
+
+/** Lifesteal Blade cost bump, plus bake live attack bonuses into damage text. */
+export function withBladeCost(
+  lines: AbilityLine[],
+  field?: FieldMonster,
+  teamAttackBonus = 0,
+): AbilityLine[] {
+  if (!field) return lines
+  const blade = wearsLifestealBlade(field)
+  const keep = (cost: EnergyCost): EnergyCost =>
+    blade ? { ...cost, require: cost.require + 1 } : cost
+  const abilities = monsterAbilities(field)
+  return lines.map((line) => {
+    const ability = abilities.find((entry) => entry.id === line.id)
+    const requiredEnergy = lifestealRequire(field, ability?.cost.require ?? line.cost.require)
+    const bonus = printedAttackBonus(field, {
+      teamAttackBonus,
+      requiredEnergy,
+      includeShadow: abilityLooksShadow(ability, line.body),
+    })
+    return {
+      ...line,
+      cost: keep(line.cost),
+      body: boostPrintedDamage(line.body, bonus),
+      upgradeCost: line.upgradeCost ? keep(line.upgradeCost) : undefined,
+      upgradeText: line.upgradeText ? boostPrintedDamage(line.upgradeText, bonus) : undefined,
+    }
+  })
 }
 
 export function abilityLines(def: CardDef, extras: AbilityDef[] = []): AbilityLine[] {

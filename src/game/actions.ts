@@ -5,6 +5,7 @@ import {
   countsAsElementalCard,
   getCard,
   getMonster,
+  identityDefId,
   hasDarkCharge,
   hasGoldAffinity,
   isBlobMonster,
@@ -15,11 +16,14 @@ import {
   monsterAbilities,
 } from './catalog'
 import { abilityNeedsChoice, abilityNeedsTarget } from './combat'
-import { abilityCostsTeamAction, getCircleAdjacent } from './damage'
+import { abilityCostsTeamAction, getCircleAdjacent, lifestealRequire } from './damage'
 import {
   activePlayer,
   canAfford,
   canReceiveEnergy,
+  cloneState,
+  makeCard,
+  otherPlayer,
   goldPayments,
   emptySlots,
   isDamageProtected,
@@ -39,10 +43,37 @@ import {
   withHostEquipment,
   withoutProtected,
 } from './targeting'
-import type { AbilityChoice, AbilityDef, GameAction, GameState, PlayerState, Stance, TargetRef } from './types'
+import type {
+  AbilityChoice,
+  AbilityDef,
+  GameAction,
+  GameState,
+  PlayerId,
+  PlayerState,
+  Stance,
+  TargetRef,
+} from './types'
 
 function canChangeStance(monster: NonNullable<PlayerState['field'][number]>): boolean {
   return !isGooed(monster) && !isClinged(monster)
+}
+
+function pegasusMoves(state: GameState, player: PlayerState): GameAction[] {
+  const earlyMain =
+    state.phase === 'main' && !state.playedCardThisTurn && state.actedSlots.length === 0
+  if (!earlyMain && state.phase !== 'move') return []
+  const actions: GameAction[] = []
+  for (let slot = 0; slot < player.field.length; slot++) {
+    const monster = monsterAt(player, slot)
+    if (!monster || monster.pegasusUsedThisTurn || isGooed(monster) || isClinged(monster)) continue
+    if (!monster.equipment.some((equipment) => equipment.defId === 'pegasus_gift')) continue
+    actions.push({
+      type: 'PEGASUS_MOVE',
+      slot,
+      stance: monster.stance === 'active' ? 'withdrawn' : 'active',
+    })
+  }
+  return actions
 }
 
 const DAMAGE_SPECIALS = new Set([
@@ -71,7 +102,7 @@ function canForgeKeystone(player: PlayerState): boolean {
   if (player.hand.length < 3) return false
   return player.field.some(
     (monster) =>
-      monster?.defId === 'colossus' &&
+      monster && identityDefId(monster) === 'colossus' &&
       !monster.equipment.some((equipment) => equipment.defId === 'colossus_keystone'),
   )
 }
@@ -92,6 +123,11 @@ function noTargetEffect(effectId: string): boolean {
     'magicFertilizer',
     'darklightPortal',
     'eyeOfTheRift',
+    'goldenDie',
+    'timeWarp',
+    'recursion',
+    'mirrorPact',
+    'hauntedMists',
   ].includes(effectId)
 }
 
@@ -124,8 +160,8 @@ function expandGoldPayments(state: GameState, actions: GameAction[]): GameAction
         : ability.cost.spend
     const extraCost = EXTRA_COST_SPECIALS.has(ability.special ?? '') ? (action.extraEnergy ?? 0) : 0
     const require = lingering
-      ? ability.cost.require + printedSpend + extraCost
-      : ability.cost.require
+      ? lifestealRequire(monster, ability.cost.require) + printedSpend + extraCost
+      : lifestealRequire(monster, ability.cost.require)
     const spend = lingering ? 0 : printedSpend + extraCost
     const payments = goldPayments(monster, require, spend)
     if (payments.length === 0) continue
@@ -169,6 +205,7 @@ function listPilePlayActions(
         }
       }
     } else if (def.kind === 'effect') {
+      if (def.effectId === 'hauntedMists' && player.discard.length === 0) continue
       if (noTargetEffect(def.effectId)) {
         actions.push({
           type: 'PLAY_EFFECT',
@@ -208,7 +245,10 @@ function listHandPlayActions(state: GameState, player: PlayerState): GameAction[
 }
 
 export function listLegalActions(state: GameState): GameAction[] {
-  return expandGoldPayments(state, restrictBonelingTargets(state, collectLegalActions(state)))
+  return expandGoldPayments(
+    state,
+    restrictHauntedTargets(state, restrictBonelingTargets(state, collectLegalActions(state))),
+  )
 }
 
 function actionTargetList(action: GameAction): TargetRef[] {
@@ -224,10 +264,23 @@ function actionTargetList(action: GameAction): TargetRef[] {
     case 'FREEZE_TARGET':
     case 'RAIN_GOO_TARGET':
     case 'CLOUD_BLESS':
+    case 'VERIDIAN_STRIKE':
       return [action.target]
     default:
       return []
   }
+}
+
+function hauntedMistsInPlay(state: GameState): boolean {
+  return state.players.some((player) =>
+    (player.ethereal ?? []).some((entry) => entry.card.defId === 'haunted_mists'),
+  )
+}
+
+function restrictHauntedTargets(state: GameState, actions: GameAction[]): GameAction[] {
+  if (!hauntedMistsInPlay(state)) return actions
+  const actor = actingPlayerId(state)
+  return actions.filter((action) => actionTargetList(action).every((target) => target.player === actor))
 }
 
 const ANY_CARD_EFFECT_IDS = new Set([
@@ -246,8 +299,14 @@ const ANY_CARD_SPECIALS = new Set([
 ])
 
 /** Ranged and any-card attacks ignore Boneling target locks. */
+function actingPlayerId(state: GameState): PlayerId {
+  const pending = state.pending
+  if (pending?.kind === 'playCards' || pending?.kind === 'replayEffect') return pending.owner
+  return activePlayer(state).id
+}
+
 function ignoresBonelingLock(state: GameState, action: GameAction): boolean {
-  const actor = activePlayer(state).id
+  const actor = actingPlayerId(state)
   if (action.type === 'USE_ABILITY') {
     const monster = state.players[actor].field[action.slot]
     if (!monster) return false
@@ -273,16 +332,74 @@ function ignoresBonelingLock(state: GameState, action: GameAction): boolean {
 
 /** While you control a Boneling, your opponent can only choose those Bonelings. */
 function restrictBonelingTargets(state: GameState, actions: GameAction[]): GameAction[] {
-  const actor = activePlayer(state).id
+  const actor = actingPlayerId(state)
   return actions.filter((action) => {
     if (ignoresBonelingLock(state, action)) return true
     return actionTargetList(action).every((target) => {
       if (target.player === actor) return true
       const side = state.players[target.player]
-      if (!side.field.some((monster) => monster && isBoneling(monster.defId))) return true
+      if (!side.field.some((monster) => monster && isBoneling(monster))) return true
       const host = side.field[target.slot]
-      return Boolean(host && isBoneling(host.defId))
+      return Boolean(host && isBoneling(host))
     })
+  })
+}
+
+function cardsInMatch(state: GameState): string[] {
+  const ids: string[] = []
+  for (const player of state.players) {
+    for (const card of [...player.deck, ...player.hand, ...player.discard, ...player.removed]) {
+      ids.push(card.instanceId)
+    }
+    for (const entry of player.ethereal ?? []) ids.push(entry.card.instanceId)
+    for (const monster of player.field) {
+      if (!monster) continue
+      ids.push(monster.instanceId)
+      for (const equipment of monster.equipment) ids.push(equipment.instanceId)
+    }
+  }
+  return ids
+}
+
+function shapeshiftDefs(state: GameState): string[] {
+  const ids = new Set<string>()
+  const consider = (defId: string) => {
+    const def = getCard(defId)
+    if (def.kind === 'monster' && def.points <= 3) ids.add(defId)
+  }
+  for (const player of state.players) {
+    for (const card of [...player.deck, ...player.hand, ...player.discard, ...player.removed]) {
+      consider(card.defId)
+    }
+    for (const entry of player.ethereal ?? []) consider(entry.card.defId)
+    for (const monster of player.field) {
+      if (!monster) continue
+      consider(monster.defId)
+      for (const equipment of monster.equipment) consider(equipment.defId)
+    }
+  }
+  return [...ids]
+}
+
+function copyCanBePlayed(state: GameState, actorId: PlayerId, defId: string): boolean {
+  const probe = cloneState(state)
+  const actor = probe.players[actorId]
+  const card = makeCard(probe, defId)
+  actor.hand.push(card)
+  probe.pending = {
+    kind: 'playCards',
+    owner: actorId,
+    played: 0,
+    from: 'hand',
+    limit: 1,
+    onlyInstanceId: card.instanceId,
+    freePlay: true,
+  }
+  return listPilePlayActions(probe, actor, 'hand').some((action) => {
+    if (action.type !== 'PLAY_MONSTER' && action.type !== 'PLAY_EFFECT' && action.type !== 'PLAY_EQUIPMENT') {
+      return false
+    }
+    return actor.hand[action.handIndex]?.instanceId === card.instanceId
   })
 }
 
@@ -290,6 +407,37 @@ function collectLegalActions(state: GameState): GameAction[] {
   if (state.winner !== null) return []
   if (state.pending) {
     const pending = state.pending
+    if (pending.kind === 'goldenDie') {
+      return [1, 2, 3, 4, 5, 6].map((face) => ({ type: 'GOLDEN_FACE' as const, face }))
+    }
+    if (pending.kind === 'replayEffect') {
+      const owner = state.players[pending.owner]
+      return listHandPlayActions(state, owner).filter((action) => {
+        if (action.type !== 'PLAY_MONSTER' && action.type !== 'PLAY_EFFECT' && action.type !== 'PLAY_EQUIPMENT') {
+          return false
+        }
+        return owner.hand[action.handIndex]?.instanceId === pending.instanceId
+      })
+    }
+    if (pending.kind === 'mirrorPick') {
+      return cardsInMatch(state).map((instanceId) => ({ type: 'MIRROR_PICK' as const, instanceId }))
+    }
+    if (pending.kind === 'mirrorOffer') {
+      const actions: GameAction[] = [{ type: 'MIRROR_DECLINE' }]
+      if (copyCanBePlayed(state, otherPlayer(pending.owner), pending.defId)) {
+        actions.push({ type: 'MIRROR_AGREE' })
+      }
+      return actions
+    }
+    if (pending.kind === 'shapeshiftPick') {
+      return shapeshiftDefs(state).map((defId) => ({ type: 'SHAPESHIFT_PICK' as const, defId }))
+    }
+    if (pending.kind === 'rewindDiscard') {
+      return state.players[pending.owner].hand.map((card) => ({
+        type: 'REWIND_DISCARD' as const,
+        instanceId: card.instanceId,
+      }))
+    }
     if (pending.kind === 'hoardChoice') {
       return [
         { type: 'HOARD_CHOICE', mode: 'gold' },
@@ -374,7 +522,7 @@ function collectLegalActions(state: GameState): GameAction[] {
       if (pending.chosenInstanceIds.length === 3) {
         owner.field.forEach((monster, slot) => {
           if (
-            monster?.defId === 'colossus' &&
+            monster && identityDefId(monster) === 'colossus' &&
             !monster.equipment.some((equipment) => equipment.defId === 'colossus_keystone')
           ) {
             actions.push({ type: 'KEYSTONE_ATTACH', slot })
@@ -561,13 +709,53 @@ function collectLegalActions(state: GameState): GameAction[] {
       }
       return actions
     }
+    if (pending.kind === 'hauntedPick') {
+      const owner = state.players[pending.owner]
+      return owner.discard.map((card) => ({ type: 'HAUNTED_PICK' as const, instanceId: card.instanceId }))
+    }
+    if (pending.kind === 'veridianFires') {
+      const warrior = state.players[pending.owner].field[pending.slot]
+      if (!warrior) return []
+      const max = Math.ceil(warrior.hp / 10)
+      const actions: GameAction[] = []
+      for (let times = 0; times <= max; times++) actions.push({ type: 'VERIDIAN_PAY', times })
+      return actions
+    }
+    if (pending.kind === 'veridianStrike') {
+      const warrior = state.players[pending.owner].field[pending.slot]
+      if (!warrior) return []
+      const ability: AbilityDef = {
+        id: 'veridian_fires',
+        name: 'Veridian Fires',
+        cost: { require: 0, spend: 0 },
+        effects: [{ type: 'damage', amount: 20 }],
+      }
+      return withoutProtected(state, abilityTargets(state, pending.owner, warrior, ability)).map((target) => ({
+        type: 'VERIDIAN_STRIKE' as const,
+        target,
+      }))
+    }
+    if (pending.kind === 'bloodcraft') {
+      return ['sword', 'spear', 'shield', 'lifesteal_blade'].map((defId) => ({
+        type: 'BLOODCRAFT_PICK' as const,
+        defId,
+      }))
+    }
     if (pending.kind === 'playCards') {
       const owner = state.players[pending.owner]
-      if (pending.from === 'discard') {
-        const plays = listPilePlayActions(state, owner, 'discard')
-        return [...plays, { type: 'PORTAL_FINISH' }]
-      }
-      return [...listHandPlayActions(state, owner), { type: 'PORTAL_FINISH' }]
+      const pile = pending.from === 'discard' ? 'discard' : 'hand'
+      const plays = listPilePlayActions(state, owner, pile).filter((action) => {
+        if (pending.monstersOnly && action.type !== 'PLAY_MONSTER') return false
+        if (pending.effectsOnly && action.type !== 'PLAY_EFFECT') return false
+        if (!pending.onlyInstanceId) return true
+        if (action.type !== 'PLAY_MONSTER' && action.type !== 'PLAY_EFFECT' && action.type !== 'PLAY_EQUIPMENT') {
+          return false
+        }
+        const cards = pile === 'discard' ? owner.discard : owner.hand
+        return cards[action.handIndex]?.instanceId === pending.onlyInstanceId
+      })
+      if (pending.mirrorRole) return [...plays, { type: 'MIRROR_SKIP' }]
+      return [...plays, { type: 'PORTAL_FINISH' }]
     }
     if (pending.kind === 'fairyHeal') {
       return anyCardTargets(state).map((target) => ({ type: 'FAIRY_HEAL' as const, target }))
@@ -622,10 +810,25 @@ function collectLegalActions(state: GameState): GameAction[] {
         .map((card) => ({ type: 'RIFT_ORDER' as const, instanceId: card.instanceId }))
     }
   }
+  if (
+    state.openingMulligan &&
+    !state.awaitingHandoff &&
+    !state.openingMulligan.decided[state.activePlayer]
+  ) {
+    if (state.openingMulligan.revealed) return [{ type: 'CONTINUE_OPENING_HAND' }]
+    return [{ type: 'KEEP_OPENING_HAND' }, { type: 'REDRAW_OPENING_HAND' }]
+  }
   if (state.awaitingHandoff) return [{ type: 'CONFIRM_HANDOFF' }]
 
   const player = activePlayer(state)
   const actions: GameAction[] = []
+
+  for (const entry of player.ethereal ?? []) {
+    if (entry.card.defId !== 'rewind' || !entry.snapshot) continue
+    if (player.hand.length > 0) {
+      actions.push({ type: 'REWIND_USE', rewindInstanceId: entry.card.instanceId })
+    }
+  }
 
   // Ungoo can be done whenever you have energy, outside the main action
   for (let slot = 0; slot < player.field.length; slot++) {
@@ -647,6 +850,7 @@ function collectLegalActions(state: GameState): GameAction[] {
     }
     case 'main': {
       if (player.isFirstTurn) {
+        actions.push(...pegasusMoves(state, player))
         for (let handIndex = 0; handIndex < player.hand.length; handIndex++) {
           const card = player.hand[handIndex]
           const def = getCard(card.defId)
@@ -657,9 +861,7 @@ function collectLegalActions(state: GameState): GameAction[] {
             }
           }
         }
-        if (state.playedCardThisTurn) {
-          actions.push({ type: 'SKIP_MAIN' })
-        }
+        if (state.playedCardThisTurn) actions.push({ type: 'SKIP_MAIN' })
         break
       }
 
@@ -673,7 +875,7 @@ function collectLegalActions(state: GameState): GameAction[] {
           if (!canUseAbilityWhileWithdrawn(monster, ability)) continue
           if (
             ability.special !== 'chaosFireworks' &&
-            !canAfford(monster, ability.cost.require, ability.cost.spend)
+            !canAfford(monster, lifestealRequire(monster, ability.cost.require), ability.cost.spend)
           ) {
             continue
           }
@@ -848,7 +1050,8 @@ function collectLegalActions(state: GameState): GameAction[] {
             ability.special === 'relentless' ||
             ability.special === 'attack' ||
             ability.special === 'drawTwo' ||
-            ability.special === 'summonBonelings'
+            ability.special === 'summonBonelings' ||
+            ability.special === 'shapeshift'
           ) {
             actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id })
             continue
@@ -920,7 +1123,7 @@ function collectLegalActions(state: GameState): GameAction[] {
           if (ability.special === 'growth') {
             for (let allySlot = 0; allySlot < player.field.length; allySlot++) {
               const ally = player.field[allySlot]
-              if (!ally || !isPlant(ally.defId)) continue
+              if (!ally || !isPlant(identityDefId(ally))) continue
               actions.push({
                 type: 'USE_ABILITY',
                 slot,
@@ -942,6 +1145,34 @@ function collectLegalActions(state: GameState): GameAction[] {
                   target: { kind: 'monster', player: owner.id, slot: hostSlot },
                 })
               }
+            }
+            continue
+          }
+          if (ability.special === 'speakerRally') {
+            const others: TargetRef[] = []
+            for (const side of state.players) {
+              for (let host = 0; host < side.field.length; host++) {
+                if (!side.field[host]) continue
+                if (side.id === player.id && host === slot) continue
+                others.push({ kind: 'monster', player: side.id, slot: host })
+              }
+            }
+            for (let i = 0; i < others.length; i++) {
+              for (let j = 0; j < others.length; j++) {
+                if (i === j) continue
+                actions.push({
+                  type: 'USE_ABILITY',
+                  slot,
+                  abilityId: ability.id,
+                  targets: [others[i], others[j]],
+                })
+              }
+            }
+            continue
+          }
+          if (ability.special === 'raid') {
+            for (const target of withoutProtected(state, abilityTargets(state, player.id, monster, ability))) {
+              actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, target })
             }
             continue
           }
@@ -1057,19 +1288,30 @@ function collectLegalActions(state: GameState): GameAction[] {
 
       if (!state.playedCardThisTurn) {
         actions.push(...listHandPlayActions(state, player))
+      } else {
+        actions.push(
+          ...listHandPlayActions(state, player).filter((action) => {
+            if (action.type !== 'PLAY_EFFECT' || action.fromDiscard) return false
+            const card = player.hand[action.handIndex]
+            const def = card ? getCard(card.defId) : undefined
+            return def?.kind === 'effect' && def.effectId === 'recursion'
+          }),
+        )
       }
       if (canForgeKeystone(player)) actions.push({ type: 'BEGIN_KEYSTONE' })
+      actions.push(...pegasusMoves(state, player))
 
       actions.push({ type: 'SKIP_MAIN' })
       break
     }
     case 'move': {
+      actions.push(...pegasusMoves(state, player))
       if (!state.movedThisTurn) {
         for (let slot = 0; slot < player.field.length; slot++) {
           const m = monsterAt(player, slot)
           if (!m || isGooed(m) || isClinged(m)) continue
           if (m.stance === 'withdrawn') actions.push({ type: 'ADVANCE', slot })
-          else if (!isBoneling(m.defId)) actions.push({ type: 'WITHDRAW', slot })
+          else if (!isBoneling(m)) actions.push({ type: 'WITHDRAW', slot })
         }
       }
       actions.push({ type: 'SKIP_MOVE' })

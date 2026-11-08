@@ -67,6 +67,36 @@ button.linkish {
   margin: 0 0 0.25rem;
 }
 
+.match-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.5rem;
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: #1a1f2b;
+  border: 1px solid #2c3344;
+  border-radius: 10px;
+}
+
+.mode-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-banner {
+  margin: 0.35rem 0 0;
+  color: #f0c674;
+  font-weight: 600;
+}
+
+.board-thinking .hand-row,
+.board-thinking .center-panel {
+  opacity: 0.85;
+}
+
 .player-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -350,6 +380,41 @@ button.linkish {
   margin-top: 0.75rem;
 }
 
+.mulligan-card {
+  max-width: 760px;
+}
+
+.mulligan-hand {
+  justify-content: center;
+  margin: 1rem 0 1.25rem;
+}
+
+.mulligan-card-wrap {
+  width: 148px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.mulligan-role {
+  color: #b9c9f8;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mulligan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+.mulligan-actions .secondary {
+  margin-top: 0;
+}
+
 .board {
   max-width: 1600px;
   margin: 0 auto;
@@ -558,6 +623,8 @@ div.tcg-card:focus-visible {
   max-width: 168px;
   border-radius: 12px;
   border: 1px dashed transparent;
+  padding: 0;
+  background: transparent;
 }
 
 .field-slot.withdrawn-pad {
@@ -1115,6 +1182,68 @@ div.tcg-card:focus-visible {
 
 .hand-card:disabled {
   opacity: 0.55;
+}
+
+/* Floats over the board so ethereal cards never reflow the hand or field. */
+.ethereal-dock {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 20;
+  width: min(168px, calc(100vw - 2rem));
+  padding: 0.55rem;
+  border: 1px solid #3a4254;
+  border-radius: 12px;
+  background: rgba(18, 22, 31, 0.92);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+}
+
+.ethereal-dock h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #9aa3b5;
+}
+
+.ethereal-dock-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.ethereal-card {
+  position: relative;
+  width: 100%;
+  max-width: none;
+}
+
+.ethereal-card:disabled {
+  cursor: default;
+  opacity: 0.9;
+}
+
+.ethereal-owner,
+.ethereal-memory {
+  position: absolute;
+  left: 0.35rem;
+  right: 0.35rem;
+  padding: 0.12rem 0.3rem;
+  border-radius: 4px;
+  background: rgba(10, 13, 18, 0.78);
+  color: #d7deea;
+  font-size: 0.68rem;
+  line-height: 1.2;
+  pointer-events: none;
+}
+
+.ethereal-owner {
+  top: 0.35rem;
+}
+
+.ethereal-memory {
+  bottom: 0.35rem;
 }
 
 @media (max-width: 1100px) {

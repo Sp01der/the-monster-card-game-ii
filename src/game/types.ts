@@ -37,6 +37,8 @@ export type StatusInstance = {
   skipNextTick: boolean
   /** Used by Cling to identify the Rarkling maintaining it. */
   sourceInstanceId?: string
+  /** Player who applied this status. Burn and poison use it when they kill. */
+  sourcePlayer?: PlayerId
 }
 
 export type AbilityChoice =
@@ -160,6 +162,14 @@ export type FieldMonster = {
   shadowBonus?: number
   /** Occupies a slot that exists only while this monster remains in play. */
   ownsExtraSlot?: boolean
+  /** Shapeshift: abilities, passives, weaknesses, and attributes come from this card. */
+  shapeshiftDefId?: string
+  /** Public Speaker: Rally has armed the death passive. */
+  speakerArmed?: boolean
+  /** Wizrobe: permanent bonus damage on this card's attacks. */
+  attackBonus?: number
+  /** Pegasus Gift already moved this card this turn. */
+  pegasusUsedThisTurn?: boolean
 }
 
 export type FieldEquipment = {
@@ -172,6 +182,35 @@ export type FieldEquipment = {
 export type HandCard = {
   instanceId: string
   defId: string
+}
+
+/** Rewind's remembered state. Restoring it does not change points. */
+export type CardSnapshot = {
+  instanceId: string
+  defId: string
+  kind: 'monster' | 'equipment'
+  owner: PlayerId
+  slot: number
+  equipmentIndex?: number
+  hostInstanceId?: string
+  hp: number
+  maxHp: number
+  energy: number
+  pendingEnergy: number
+  stance: Stance
+  statuses: StatusInstance[]
+  equipment: FieldEquipment[]
+  gold?: number
+  shadowBonus?: number
+  shapeshiftDefId?: string
+  weaknessOverride?: DamageType
+  unending?: boolean
+}
+
+export type EtherealEntry = {
+  card: HandCard
+  /** Rewind remembers a card. Haunted Mists has no snapshot. */
+  snapshot?: CardSnapshot
 }
 
 export type PlayerState = {
@@ -200,6 +239,12 @@ export type PlayerState = {
   damagedByInstanceIds?: string[]
   /** ATTACK!: added to this player's damaging hits before weakness, until the turn ends. */
   attackBonus?: number
+  /** Time Warp: this player takes another full turn after the current one ends. */
+  extraTurn?: boolean
+  /** Public Speaker: extra team actions to add at the start of the next main phase. */
+  bonusTeamActions?: number
+  /** Ethereal cards. They are in the match, but not on the field. */
+  ethereal?: EtherealEntry[]
 }
 
 export type LogEntry = {
@@ -242,6 +287,15 @@ export type GameState = {
   pendingStack: PendingInteraction[]
   /** True when waiting for pass-the-device cover before revealing hand. */
   awaitingHandoff: boolean
+  /**
+   * Each player may keep or redraw their opening hand once, before any other choice.
+   * Absent after both have decided, and absent when the opening is skipped.
+   */
+  openingMulligan?: {
+    decided: [boolean, boolean]
+    /** The active player has redrawn and is looking at the new hand. */
+    revealed: boolean
+  }
   winner: PlayerId | null
   log: LogEntry[]
   /** Optional injectable RNG for tests (returns 1-6). */
@@ -249,9 +303,28 @@ export type GameState = {
   /** Uniform random float in [0,1), used for shuffles/random card selection. */
   random: () => number
   nextInstanceId: number
+  /** Owners of Golden Dice waiting for the next roll, oldest first. */
+  goldenDice?: PlayerId[]
+  /** Face chosen for the roll that is being resolved right now. Consumed once. */
+  goldenDieFace?: number
+  /** Recursion: the next effect is replayed once per charge as soon as it finishes. */
+  recursion?: {
+    owner: PlayerId
+    charges: number
+    watchId?: string
+    replaysLeft: number
+    targets?: TargetRef[]
+    generation?: number
+    replayingNow?: boolean
+  }
+  /** Cards played this turn. Starlight's cards each count. Recursion and its replay do not. */
+  cardsPlayedThisTurn?: number
+  /** Wizrobe Spell Casting: effect damage is dealt as this monster's attack. */
+  spellSourceInstanceId?: string
+  nextPendingUid?: number
 }
 
-export type PendingInteraction =
+type PendingShape =
   | {
       kind: 'rainChoice'
       owner: PlayerId
@@ -394,6 +467,75 @@ export type PendingInteraction =
       /** Darklight Portal plays from the discard, once. Starlight plays from the hand. */
       from?: 'hand' | 'discard'
       limit?: number
+      /** When set, only this card may be played. */
+      onlyInstanceId?: string
+      /** The play does not spend the turn's card play. */
+      freePlay?: boolean
+      /** Mirror Pact's free copy, played during the pact's resolution. */
+      mirrorRole?: 'opponent' | 'self'
+      pactOwner?: PlayerId
+      copiedDefId?: string
+      /** Uprising plays monsters only. */
+      monstersOnly?: boolean
+      /** Spell Casting plays one effect. */
+      effectsOnly?: boolean
+      /** Uprising: energy granted to each monster as it enters. */
+      grantEnergy?: number
+    }
+  | {
+      kind: 'veridianFires'
+      owner: PlayerId
+      slot: number
+    }
+  | {
+      kind: 'veridianStrike'
+      owner: PlayerId
+      slot: number
+      times: number
+    }
+  | {
+      kind: 'bloodcraft'
+      owner: PlayerId
+      slot: number
+    }
+  | {
+      kind: 'hauntedPick'
+      owner: PlayerId
+      card: HandCard
+    }
+  | {
+      kind: 'goldenDie'
+      owner: PlayerId
+      action: GameAction
+    }
+  | {
+      kind: 'replayEffect'
+      owner: PlayerId
+      instanceId: string
+    }
+  | {
+      kind: 'mirrorPick'
+      owner: PlayerId
+    }
+  | {
+      kind: 'mirrorOffer'
+      owner: PlayerId
+      defId: string
+    }
+  | {
+      kind: 'mirrorContinue'
+      pactOwner: PlayerId
+      defId: string
+    }
+  | {
+      kind: 'shapeshiftPick'
+      owner: PlayerId
+      slot: number
+    }
+  | {
+      kind: 'rewindDiscard'
+      owner: PlayerId
+      rewindInstanceId: string
     }
   | {
       kind: 'eldersEye'
@@ -458,6 +600,14 @@ export type PendingInteraction =
       order: string[]
       stage: 'discard' | 'order'
     }
+
+export type PendingInteraction = PendingShape & {
+  uid?: number
+  /** Set on pendings created by the effect Recursion is watching, including nested choices. */
+  recursionGen?: number
+  /** Wizrobe remains the source of damage while this choice resolves. */
+  spellSourceInstanceId?: string
+}
 
 export type TargetRef =
   | { kind: 'monster'; player: PlayerId; slot: number }
@@ -557,6 +707,22 @@ export type GameAction =
   | { type: 'FORCE_WITHDRAW'; accept: boolean }
   | { type: 'END_TURN' }
   | { type: 'CONFIRM_HANDOFF' }
+  | { type: 'KEEP_OPENING_HAND' }
+  | { type: 'REDRAW_OPENING_HAND' }
+  | { type: 'CONTINUE_OPENING_HAND' }
+  | { type: 'GOLDEN_FACE'; face: number }
+  | { type: 'MIRROR_PICK'; instanceId: string }
+  | { type: 'MIRROR_AGREE' }
+  | { type: 'MIRROR_DECLINE' }
+  | { type: 'MIRROR_SKIP' }
+  | { type: 'SHAPESHIFT_PICK'; defId: string }
+  | { type: 'REWIND_USE'; rewindInstanceId: string }
+  | { type: 'REWIND_DISCARD'; instanceId: string }
+  | { type: 'VERIDIAN_PAY'; times: number }
+  | { type: 'VERIDIAN_STRIKE'; target: TargetRef }
+  | { type: 'BLOODCRAFT_PICK'; defId: string }
+  | { type: 'HAUNTED_PICK'; instanceId: string }
+  | { type: 'PEGASUS_MOVE'; slot: number; stance: Stance }
 
 export const FIELD_SIZE = 7
 export const STARTING_POINTS = 6

@@ -1,3 +1,4 @@
+import { highFaces } from './dice'
 import type { AbilityDef, CardDef, DamageType, FieldMonster, PlayerState } from './types'
 
 /** Parse energy notation: 0 = require, + = spend. Total needed = require + spend. */
@@ -183,7 +184,7 @@ export const CATALOG: Record<string, CardDef> = {
             type: 'chanceBoostDamage',
             base: 10,
             boosted: 20,
-            successFaces: [1, 2],
+            successFaces: highFaces(2),
           },
         ],
       },
@@ -254,7 +255,7 @@ export const CATALOG: Record<string, CardDef> = {
     kind: 'monster', id: 'rarkling', name: 'Rarkling', points: 2, maxHp: 100, weakness: 'ice',
     abilities: [
       { id: 'claw_rake', name: 'Claw Rake', cost: parseCost('0'),
-        effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: [1, 2, 3] }] },
+        effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: highFaces(3) }] },
       { id: 'cling', name: 'Cling', cost: parseCost('++'), special: 'cling', effects: [] },
     ],
   },
@@ -273,7 +274,7 @@ export const CATALOG: Record<string, CardDef> = {
     passiveText: 'Energy phase: if unused this turn, gain 1 energy.',
     abilities: [
       { id: 'rusty_claw', name: 'Rusty Claw', cost: parseCost('+'),
-        effects: [{ type: 'chanceBoostDamage', base: 0, boosted: 30, successFaces: [1, 2, 3, 4] }] },
+        effects: [{ type: 'chanceBoostDamage', base: 0, boosted: 30, successFaces: highFaces(4) }] },
       { id: 'plasma_volley', name: 'Plasma Volley', cost: parseCost('+++'), special: 'plasmaVolley', effects: [] },
     ],
   },
@@ -283,7 +284,7 @@ export const CATALOG: Record<string, CardDef> = {
     passiveText: 'While in play, add 1 distributable energy each energy phase.',
     abilities: [
       { id: 'light_beam', name: 'Light Beam', cost: parseCost('00'),
-        effects: [{ type: 'chanceBoostDamage', base: 10, boosted: 20, successFaces: [1, 2, 3], damageType: 'light' }] },
+        effects: [{ type: 'chanceBoostDamage', base: 10, boosted: 20, successFaces: highFaces(3), damageType: 'light' }] },
       { id: 'heal', name: 'Heal', cost: parseCost('+'), ranged: true,
         targetMode: 'otherMonster', special: 'healOther', effects: [] },
     ],
@@ -314,7 +315,7 @@ export const CATALOG: Record<string, CardDef> = {
     kind: 'monster', id: 'orc', name: 'Orc', points: 2, maxHp: 80, defense: 1,
     abilities: [
       { id: 'cruel_scimitar', name: 'Cruel Scimitar', cost: parseCost('0+'),
-        effects: [{ type: 'chanceBoostDamage', base: 0, boosted: 40, successFaces: [2, 3, 4, 5, 6] }] },
+        effects: [{ type: 'chanceBoostDamage', base: 0, boosted: 40, successFaces: highFaces(5) }] },
       { id: 'poisoned_shaft', name: 'Poisoned Shaft', cost: parseCost('0+'), ranged: true,
         effects: [
           { type: 'damage', amount: 10, damageType: 'poison' },
@@ -338,7 +339,7 @@ export const CATALOG: Record<string, CardDef> = {
     weakness: 'light', goldAffinity: true,
     abilities: [
       { id: 'rusty_cutlass', name: 'Rusty Cutlass', cost: parseCost('+'),
-        effects: [{ type: 'chanceBoostDamage', base: 0, boosted: 30, successFaces: [1, 2, 3, 4] }] },
+        effects: [{ type: 'chanceBoostDamage', base: 0, boosted: 30, successFaces: highFaces(4) }] },
       { id: 'lost_treasure', name: 'Lost Treasure', cost: parseCost('000'), ranged: true,
         special: 'lostTreasure', effects: [] },
       { id: 'sunken_plunder', name: 'Sunken Plunder', cost: parseCost('0++'), ranged: true,
@@ -377,7 +378,7 @@ export const CATALOG: Record<string, CardDef> = {
     weakness: 'ice',
     abilities: [
       { id: 'snap', name: 'Snap', cost: parseCost('+'),
-        effects: [{ type: 'chanceBoostDamage', base: 30, boosted: 40, successFaces: [1, 2] }] },
+        effects: [{ type: 'chanceBoostDamage', base: 30, boosted: 40, successFaces: highFaces(2) }] },
       { id: 'hunt', name: 'Hunt', cost: parseCost('0+'),
         special: 'hunt', effects: [] },
     ],
@@ -414,7 +415,7 @@ export const CATALOG: Record<string, CardDef> = {
     abilities: [
       { id: 'winters_talons', name: "Winter's Talons", cost: parseCost('+'), ice: true,
         effects: [{ type: 'chanceBoostDamage', base: 30, boosted: 40,
-          successFaces: [1, 2, 3], damageType: 'ice' }] },
+          successFaces: highFaces(3), damageType: 'ice' }] },
       { id: 'frostbite', name: 'Frostbite', cost: parseCost('00'), ice: true,
         special: 'frostbite', effects: [] },
     ],
@@ -439,7 +440,7 @@ export const CATALOG: Record<string, CardDef> = {
         special: 'freezeTwo', effects: [] },
       { id: 'frost_punch', name: 'Frost Punch', cost: parseCost('0'), ice: true,
         effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30,
-          successFaces: [1, 2], damageType: 'ice' }] },
+          successFaces: highFaces(2), damageType: 'ice' }] },
       { id: 'chill', name: 'Chill', cost: parseCost('00'), ice: true,
         special: 'chill', effects: [] },
     ],
@@ -526,7 +527,7 @@ export const CATALOG: Record<string, CardDef> = {
         effects: [{ type: 'damage', amount: 40 }] },
       { id: 'cyclops_laser', name: "Cyclops' Laser", cost: parseCost('0++'),
         effects: [
-          { type: 'chanceBoostDamage', base: 30, boosted: 40, successFaces: [1, 2, 3], damageType: 'light' },
+          { type: 'chanceBoostDamage', base: 30, boosted: 40, successFaces: highFaces(3), damageType: 'light' },
           { type: 'status', status: 'burn', turns: 3 },
         ] },
       { id: 'eye_flash', name: 'Eye Flash', cost: parseCost('000'), special: 'eyeFlash',
@@ -650,7 +651,7 @@ export const CATALOG: Record<string, CardDef> = {
     weakness: 'fire', families: ['plant', 'woody'],
     abilities: [
       { id: 'woody_spear', name: 'Spear', cost: parseCost('0'),
-        effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: [1, 2] }] },
+        effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: highFaces(2) }] },
       { id: 'ambush', name: 'Ambush', cost: parseCost('++'),
         effects: [{ type: 'rollDamage', table: { 1: 10, 2: 10, 3: 10, 4: 40, 5: 40, 6: 40 } }] },
       { id: 'team_attack', name: 'Team Attack', cost: parseCost('00'), special: 'teamAttack', effects: [] },
@@ -683,7 +684,7 @@ export const CATALOG: Record<string, CardDef> = {
     weakness: 'fire', extremeWeakness: true, families: ['plant'],
     abilities: [
       { id: 'thornbark_stick', name: 'Thornbark Stick', cost: parseCost('0'),
-        effects: [{ type: 'chanceBoostDamage', base: 10, boosted: 20, successFaces: [1] }] },
+        effects: [{ type: 'chanceBoostDamage', base: 10, boosted: 20, successFaces: highFaces(1) }] },
       { id: 'healing_hands', name: 'Healing Hands', cost: parseCost('++'), ranged: true,
         special: 'healingHands', effects: [] },
       { id: 'growth', name: 'Growth', cost: parseCost('000'), special: 'growth', effects: [] },
@@ -741,7 +742,7 @@ export const CATALOG: Record<string, CardDef> = {
     weakness: 'electric',
     abilities: [
       { id: 'legion_spear', name: 'Spear', cost: parseCost('0'),
-        effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: [1, 2, 3] }] },
+        effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: highFaces(3) }] },
       { id: 'improvised_weapon', name: 'Improvised Weapon', cost: parseCost('0+'),
         effects: [{ type: 'damage', amount: 40 }] },
       { id: 'relentless', name: 'Relentless', cost: parseCost('++'), free: true, special: 'relentless', effects: [] },
@@ -753,7 +754,7 @@ export const CATALOG: Record<string, CardDef> = {
     passiveText: 'During your energy phase, you may give 1 energy to a monster you control worth 2 points or less.',
     abilities: [
       { id: 'legion_spear', name: 'Spear', cost: parseCost('0'),
-        effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: [1, 2, 3] }] },
+        effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: highFaces(3) }] },
       { id: 'attack', name: 'ATTACK!', cost: parseCost('++++'), special: 'attack', effects: [] },
     ],
   },
@@ -886,6 +887,30 @@ export const CATALOG: Record<string, CardDef> = {
   eye_of_the_rift: {
     kind: 'effect', id: 'eye_of_the_rift', name: "Eye o' the Rift", effectId: 'eyeOfTheRift',
   },
+  the_golden_die: {
+    kind: 'effect', id: 'the_golden_die', name: 'The Golden Die', effectId: 'goldenDie',
+  },
+  time_warp: {
+    kind: 'effect', id: 'time_warp', name: 'Time Warp', effectId: 'timeWarp',
+  },
+  inversion: {
+    kind: 'effect', id: 'inversion', name: 'Inversion', effectId: 'inversion',
+  },
+  recursion: {
+    kind: 'effect', id: 'recursion', name: 'Recursion', effectId: 'recursion',
+  },
+  mirror_pact: {
+    kind: 'effect', id: 'mirror_pact', name: 'Mirror Pact', effectId: 'mirrorPact',
+  },
+  rewind: {
+    kind: 'effect', id: 'rewind', name: 'Rewind', effectId: 'rewind',
+  },
+  shapeshifter: {
+    kind: 'monster', id: 'shapeshifter', name: 'Shapeshifter', points: 3, maxHp: 110,
+    abilities: [
+      { id: 'shapeshift', name: 'Shapeshift', cost: parseCost('+'), special: 'shapeshift', effects: [] },
+    ],
+  },
   thunder_core: {
     kind: 'monster', id: 'thunder_core', name: 'Thunder Core', points: 2, maxHp: 80,
     weakness: 'wind',
@@ -902,7 +927,7 @@ export const CATALOG: Record<string, CardDef> = {
     passiveText: 'Energy phase: if unused this turn, gain 1 energy.',
     abilities: [
       { id: 'robotic_stab', name: 'Robotic Stab', cost: parseCost('00'),
-        effects: [{ type: 'chanceBoostDamage', base: 10, boosted: 30, successFaces: [1, 2, 3, 4, 5] }] },
+        effects: [{ type: 'chanceBoostDamage', base: 10, boosted: 30, successFaces: highFaces(5) }] },
       { id: 'plasma_cannon', name: 'Plasma Cannon', cost: parseCost('++++'),
         special: 'plasmaCannon', effects: [] },
     ],
@@ -935,7 +960,7 @@ export const CATALOG: Record<string, CardDef> = {
     passiveText: 'Energy phase: if unused this turn, gain 1 energy.',
     abilities: [
       { id: 'claw', name: 'Claw', cost: parseCost('+'),
-        effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: [1, 2, 3] }] },
+        effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: highFaces(3) }] },
       { id: 'collect', name: 'Collect', cost: parseCost(''), free: true,
         special: 'collect', targetMode: 'otherMonster', effects: [] },
       { id: 'supply', name: 'Supply', cost: parseCost('0'), free: true,
@@ -962,7 +987,7 @@ export const CATALOG: Record<string, CardDef> = {
       { id: 'chomp', name: 'Chomp', cost: parseCost('+'),
         effects: [{ type: 'damage', amount: 40 }] },
       { id: 'acid_spew', name: 'Acid Spew', cost: parseCost('00'),
-        effects: [{ type: 'chanceBoostDamage', base: 10, boosted: 50, successFaces: [1, 2, 3, 4], damageType: 'poison' }] },
+        effects: [{ type: 'chanceBoostDamage', base: 10, boosted: 50, successFaces: highFaces(4), damageType: 'poison' }] },
       { id: 'gladin_sting', name: 'Gladin Sting', cost: parseCost('0+'),
         effects: [
           { type: 'damage', amount: 10, damageType: 'poison' },
@@ -1019,7 +1044,7 @@ export const CATALOG: Record<string, CardDef> = {
         effects: [{ type: 'damage', amount: 30 }] },
       { id: 'boulder_toss', name: 'Boulder Toss', cost: parseCost('0++'), ranged: true,
         effects: [{
-          type: 'chanceBoostDamage', base: 0, boosted: 60, successFaces: [1, 2, 3, 4],
+          type: 'chanceBoostDamage', base: 0, boosted: 60, successFaces: highFaces(4),
           damageType: 'earth',
         }] },
       { id: 'meat_shield', name: 'Meat Shield', cost: parseCost('00'), free: true,
@@ -1143,6 +1168,52 @@ export const CATALOG: Record<string, CardDef> = {
     kind: 'equipment', id: 'colossus_keystone', name: 'Colossus Keystone', maxHp: 1,
     equipmentId: 'colossusKeystone', createdOnly: true, indestructible: true,
   },
+  corsair_of_wildersel: {
+    kind: 'monster', id: 'corsair_of_wildersel', name: 'Corsair of Wildersel', points: 2, maxHp: 80,
+    goldAffinity: true,
+    abilities: [
+      { id: 'raid', name: 'Raid', cost: parseCost('+'), special: 'raid', effects: [] },
+      { id: 'treblae_shot', name: 'Treblae Shot', cost: parseCost('000'),
+        effects: [{ type: 'damage', amount: 50 }] },
+    ],
+  },
+  public_speaker: {
+    kind: 'monster', id: 'public_speaker', name: 'Public Speaker', points: 2, maxHp: 80,
+    passiveText:
+      'While active, if this card is killed by an opponent then all your monsters gain 1 energy, and you may take an additional action on your next turn.',
+    abilities: [
+      { id: 'speaker_rally', name: 'Rally', cost: parseCost('0'), special: 'speakerRally', effects: [] },
+      { id: 'uprising', name: 'Uprising', cost: parseCost('+++'), special: 'uprising', effects: [] },
+    ],
+  },
+  pegasus_gift: {
+    kind: 'equipment', id: 'pegasus_gift', name: 'Pegasus Gift', maxHp: 20,
+    equipmentId: 'pegasusGift',
+  },
+  haunted_mists: {
+    kind: 'effect', id: 'haunted_mists', name: 'Haunted Mists', effectId: 'hauntedMists',
+  },
+  veridis_warrior: {
+    kind: 'monster', id: 'veridis_warrior', name: 'Veridis Warrior', points: 2, maxHp: 100,
+    abilities: [
+      { id: 'slash', name: 'Slash', cost: parseCost('0'), effects: [{ type: 'damage', amount: 20 }] },
+      { id: 'veridian_fires', name: 'Veridian Fires', cost: parseCost('0'), special: 'veridianFires', effects: [] },
+      { id: 'veridian_bloodcraft', name: 'Veridian Bloodcraft', cost: parseCost('0'), special: 'veridianBloodcraft', effects: [] },
+    ],
+  },
+  lifesteal_blade: {
+    kind: 'equipment', id: 'lifesteal_blade', name: 'Lifesteal Blade', maxHp: 30,
+    equipmentId: 'lifestealBlade',
+  },
+  wizrobe: {
+    kind: 'monster', id: 'wizrobe', name: 'Wizrobe', points: 2, maxHp: 90,
+    passiveText: "Each time you play an effect card this card's attacks gain +10 damage.",
+    abilities: [
+      { id: 'magic_missile', name: 'Magic Missile', cost: parseCost('00'), ranged: true,
+        effects: [{ type: 'damage', amount: 20 }] },
+      { id: 'spell_casting', name: 'Spell Casting', cost: parseCost('0+'), special: 'spellCasting', effects: [] },
+    ],
+  },
 }
 
 export const SPEAR_ABILITY: AbilityDef = {
@@ -1150,7 +1221,7 @@ export const SPEAR_ABILITY: AbilityDef = {
   name: 'Spear',
   cost: parseCost('0'),
   effects: [
-    { type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: [1, 2, 3] },
+    { type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: highFaces(3) },
   ],
 }
 
@@ -1177,8 +1248,16 @@ export function grantedAbilities(monster: FieldMonster): AbilityDef[] {
   return monster.equipment.some((eq) => eq.defId === 'spear') ? [SPEAR_ABILITY] : []
 }
 
+export function identityDefId(monster: { defId: string; shapeshiftDefId?: string }): string {
+  return monster.shapeshiftDefId ?? monster.defId
+}
+
 export function monsterAbilities(monster: FieldMonster): AbilityDef[] {
-  return [...getMonster(monster.defId).abilities, ...grantedAbilities(monster)]
+  const printed = getMonster(monster.defId)
+  const source = monster.shapeshiftDefId ? getMonster(monster.shapeshiftDefId) : printed
+  const shapeshift = printed.abilities.filter((ability) => ability.id === 'shapeshift')
+  const copied = source.abilities.filter((ability) => ability.id !== 'shapeshift')
+  return [...shapeshift, ...copied, ...grantedAbilities(monster)]
 }
 
 export function totalEnergyNeeded(cost: { require: number; spend: number }): number {
@@ -1279,7 +1358,8 @@ export function isOrcOrGoblin(defId: string): boolean {
   return name.includes('orc') || name.includes('goblin')
 }
 
-export function isBoneling(defId: string): boolean {
+export function isBoneling(card: string | { defId: string; shapeshiftDefId?: string }): boolean {
+  const defId = typeof card === 'string' ? card : identityDefId(card)
   return defId === 'boneling'
 }
 
@@ -1290,7 +1370,7 @@ export function isStormling(defId: string): boolean {
 
 export function countOtherStormlings(player: PlayerState, exceptInstanceId: string): number {
   return player.field.filter(
-    (monster) => monster && monster.instanceId !== exceptInstanceId && isStormling(monster.defId),
+    (monster) => monster && monster.instanceId !== exceptInstanceId && isStormling(identityDefId(monster)),
   ).length
 }
 
@@ -1345,11 +1425,11 @@ export function isFireMonster(defId: string): boolean {
 }
 
 export function hasDarkCharge(monster: FieldMonster): boolean {
-  return getMonster(monster.defId).darkCharge === true
+  return getMonster(identityDefId(monster)).darkCharge === true
 }
 
 export function hasGoldAffinity(monster: FieldMonster): boolean {
-  return getMonster(monster.defId).goldAffinity === true
+  return getMonster(identityDefId(monster)).goldAffinity === true
 }
 
 export function canUseDarkCharge(player: PlayerState): boolean {

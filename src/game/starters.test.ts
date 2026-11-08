@@ -5,7 +5,13 @@ import { cardIdsFromCounts, STARTERS } from './starters'
 
 describe('starter decks', () => {
   it('are playable themed decks', () => {
-    expect(STARTERS.map((starter) => starter.id)).toEqual(['ember', 'frost', 'tide', 'gloom'])
+    expect(STARTERS.map((starter) => starter.id)).toEqual([
+      'ember',
+      'frost',
+      'tide',
+      'gloom',
+      'foundry',
+    ])
 
     for (const starter of STARTERS) {
       const cards = cardIdsFromCounts(starter.counts)

@@ -23,8 +23,15 @@ import {
   type StoredDeck,
 } from './deckStorage'
 
+export type MatchStart = {
+  player0: DeckSetup
+  player1: DeckSetup
+  /** Seat controlled by the computer, or null for hotseat. */
+  computerPlayer: 0 | 1 | null
+}
+
 type Props = {
-  onStart: (p0: DeckSetup, p1: DeckSetup) => void
+  onStart: (match: MatchStart) => void
 }
 
 type DeckSource = { kind: 'starter' | 'saved'; id: string } | null
@@ -156,11 +163,15 @@ export function DeckBuilder({ onStart }: Props) {
     initialDraft(store, 0, 'Player 1'),
     initialDraft(store, 1, 'Player 2'),
   ])
+  const [vsComputer, setVsComputer] = useState(false)
+  const [computerGoesFirst, setComputerGoesFirst] = useState(false)
   const [query, setQuery] = useState('')
   const [kind, setKind] = useState<KindFilter>('all')
   const [cardType, setCardType] = useState<CardSearchType | 'any'>('any')
   const [loadOpen, setLoadOpen] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+
+  const computerSeat: 0 | 1 | null = vsComputer ? (computerGoesFirst ? 0 : 1) : null
 
   const draft = drafts[player]
 
@@ -182,11 +193,17 @@ export function DeckBuilder({ onStart }: Props) {
   )
 
   const error = useMemo(() => {
-    for (const [label, current] of [
-      ['Player 1', drafts[0]],
-      ['Player 2', drafts[1]],
-    ] as const) {
-      if (!current.name.trim()) return `${label} needs a name.`
+    for (const index of [0, 1] as const) {
+      const current = drafts[index]
+      const label =
+        vsComputer && index === computerSeat
+          ? 'Computer'
+          : vsComputer
+            ? 'You'
+            : `Player ${index + 1}`
+      if (!vsComputer || index !== computerSeat) {
+        if (!current.name.trim()) return `${label} needs a name.`
+      }
       if (totalCards(current) < STARTING_HAND) {
         return `${label} needs at least ${STARTING_HAND} cards.`
       }
@@ -198,7 +215,7 @@ export function DeckBuilder({ onStart }: Props) {
       }
     }
     return null
-  }, [drafts])
+  }, [computerSeat, drafts, vsComputer])
 
   function updateDraft(next: Draft | ((current: Draft) => Draft)) {
     setDrafts((prev) => {
@@ -291,7 +308,21 @@ export function DeckBuilder({ onStart }: Props) {
   function startMatch() {
     remember(0, drafts[0].source)
     remember(1, drafts[1].source)
-    onStart(draftToSetup(drafts[0]), draftToSetup(drafts[1]))
+    const setups: [DeckSetup, DeckSetup] = [
+      draftToSetup({
+        ...drafts[0],
+        name: vsComputer && computerSeat === 0 ? 'Computer' : drafts[0].name,
+      }),
+      draftToSetup({
+        ...drafts[1],
+        name: vsComputer && computerSeat === 1 ? 'Computer' : drafts[1].name,
+      }),
+    ]
+    onStart({
+      player0: setups[0],
+      player1: setups[1],
+      computerPlayer: computerSeat,
+    })
   }
 
   const sourceLabel =
@@ -305,27 +336,82 @@ export function DeckBuilder({ onStart }: Props) {
     <div className="setup-screen">
       <header className="app-hero">
         <h1>The Monster Card Game II</h1>
-        <p>Build a deck, save it in this browser, pick the top monster, then play hotseat.</p>
+        <p>
+          Build a deck, save it in this browser, pick the top monster, then play hotseat or against
+          the computer.
+        </p>
       </header>
 
-      <div className="player-tabs" role="tablist">
-        {([0, 1] as const).map((index) => (
-          <button
-            key={index}
-            type="button"
-            role="tab"
-            aria-selected={player === index}
-            className={player === index ? 'player-tab selected' : 'player-tab'}
-            onClick={() => {
-              setPlayer(index)
-              setLoadOpen(false)
-              setStatus(null)
+      <div className="match-mode">
+        <label className="mode-check">
+          <input
+            type="checkbox"
+            checked={vsComputer}
+            onChange={(e) => {
+              const on = e.target.checked
+              setVsComputer(on)
+              if (on) {
+                const seat: 0 | 1 = computerGoesFirst ? 0 : 1
+                setPlayer(seat === 0 ? 1 : 0)
+                setDrafts((prev) => {
+                  const copy: [Draft, Draft] = [prev[0], prev[1]]
+                  copy[seat] = { ...copy[seat], name: 'Computer' }
+                  return copy
+                })
+              }
             }}
-          >
-            <span>{drafts[index].name.trim() || `Player ${index + 1}`}</span>
-            <span className="muted">{totalCards(drafts[index])} cards</span>
-          </button>
-        ))}
+          />
+          Play against the computer
+        </label>
+        {vsComputer && (
+          <label className="mode-check">
+            <input
+              type="checkbox"
+              checked={computerGoesFirst}
+              onChange={(e) => {
+                const first = e.target.checked
+                setComputerGoesFirst(first)
+                setPlayer(first ? 1 : 0)
+                setDrafts((prev) => {
+                  const copy: [Draft, Draft] = [
+                    { ...prev[0], name: first ? 'Computer' : prev[0].name === 'Computer' ? 'Player 1' : prev[0].name },
+                    { ...prev[1], name: first ? (prev[1].name === 'Computer' ? 'Player 2' : prev[1].name) : 'Computer' },
+                  ]
+                  return copy
+                })
+              }}
+            />
+            Computer goes first
+          </label>
+        )}
+      </div>
+
+      <div className="player-tabs" role="tablist">
+        {([0, 1] as const).map((index) => {
+          const label =
+            vsComputer && index === computerSeat
+              ? 'Computer'
+              : vsComputer
+                ? 'You'
+                : drafts[index].name.trim() || `Player ${index + 1}`
+          return (
+            <button
+              key={index}
+              type="button"
+              role="tab"
+              aria-selected={player === index}
+              className={player === index ? 'player-tab selected' : 'player-tab'}
+              onClick={() => {
+                setPlayer(index)
+                setLoadOpen(false)
+                setStatus(null)
+              }}
+            >
+              <span>{label}</span>
+              <span className="muted">{totalCards(drafts[index])} cards</span>
+            </button>
+          )
+        })}
       </div>
 
       <div className="builder">

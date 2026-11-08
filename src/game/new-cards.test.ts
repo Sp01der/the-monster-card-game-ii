@@ -152,7 +152,7 @@ describe('new combat rules', () => {
 
 describe('energy passives', () => {
   it('Spark, Fairy, Crystal, and unused Construct apply cumulatively', () => {
-    let state = main(game([1]))
+    let state = main(game([6]))
     put(state.players[0], 0, 'goblin_magician', { energy: 1 })
     put(state.players[0], 1, 'yellow_fairy', {
       equipment: [{ instanceId: 'c', defId: 'energy_crystal', hp: 30, maxHp: 30 }],
@@ -290,6 +290,30 @@ describe('special choices and effects', () => {
     expect(state.pending).toBeNull()
     expect(state.players[0].field[0]!.statuses.some((s) => s.kind === 'goo')).toBe(true)
     expect(state.players[1].field[0]!.statuses.some((s) => s.kind === 'goo')).toBe(true)
+  })
+
+  it('hits enemies on high rolls and allies on low rolls with Storm of a Thousand Bolts', () => {
+    const struck = main(game([1, 6]))
+    put(struck.players[0], 0, 'leecher')
+    put(struck.players[1], 0, 'leecher')
+    struck.players[0].hand = [{ instanceId: 'bolts', defId: 'storm_bolts' }]
+    const hit = applyAction(
+      struck,
+      action(struck, (candidate) => candidate.type === 'PLAY_EFFECT'),
+    )
+    expect(hit.players[0].field[0]?.hp).toBe(50)
+    expect(hit.players[1].field[0]?.hp).toBe(40)
+
+    const spared = main(game([6, 1]))
+    put(spared.players[0], 0, 'leecher')
+    put(spared.players[1], 0, 'leecher')
+    spared.players[0].hand = [{ instanceId: 'bolts', defId: 'storm_bolts' }]
+    const miss = applyAction(
+      spared,
+      action(spared, (candidate) => candidate.type === 'PLAY_EFFECT'),
+    )
+    expect(miss.players[0].field[0]?.hp).toBe(70)
+    expect(miss.players[1].field[0]?.hp).toBe(70)
   })
 
   it('prevents duplicate equipment names on one monster', () => {

@@ -103,13 +103,13 @@ describe('gold affinity cards', () => {
   })
 
   it('doubles Great Axe after bonuses and before defense', () => {
-    const doubled = main(game(() => 1))
+    const doubled = main(game(() => 6))
     put(doubled.players[0], 0, 'dwarven_warrior', { energy: 2 })
     put(doubled.players[1], 0, 'red_knight')
     const hit = use(doubled, 'great_axe')
     expect(hit.players[1].field[0]!.hp).toBe(90)
 
-    const plain = main(game(() => 6))
+    const plain = main(game(() => 1))
     put(plain.players[0], 0, 'dwarven_warrior', { energy: 2 })
     put(plain.players[1], 0, 'red_knight')
     expect(use(plain, 'great_axe').players[1].field[0]!.hp).toBe(110)
@@ -263,7 +263,7 @@ describe('gold affinity cards', () => {
   })
 
   it('remembers every monster that has damaged you and hits them with Archers', () => {
-    const state = main(game(() => 6), 1)
+    const state = main(game(() => 1), 1)
     put(state.players[0], 0, 'amanesian_warden')
     put(state.players[1], 0, 'dwarven_warrior', { energy: 2 })
     put(state.players[1], 1, 'blob')

@@ -66,7 +66,7 @@ function playMonster(
 }
 
 describe('first turn', () => {
-  it('starts in main (no draw), forbids abilities, requires playing a monster', () => {
+  it('starts in main (no draw), forbids abilities, and can play any number of monsters', () => {
     let state = startGame()
     expect(state.phase).toBe('main')
     expect(state.abilityUsesLeft).toBe(0)
@@ -79,6 +79,7 @@ describe('first turn', () => {
     expect(main.some((a) => a.type === 'SKIP_MAIN')).toBe(false)
     expect(main.some((a) => a.type === 'PLAY_MONSTER')).toBe(true)
     expect(main.some((a) => a.type === 'PLAY_MONSTER' && a.stance === 'withdrawn')).toBe(true)
+    expect(main.some((a) => a.type === 'PLAY_EFFECT' || a.type === 'PLAY_EQUIPMENT')).toBe(false)
 
     const play = main.find((a) => a.type === 'PLAY_MONSTER' && a.stance === 'active')
     if (!play || play.type !== 'PLAY_MONSTER') throw new Error('expected play')
@@ -86,6 +87,13 @@ describe('first turn', () => {
     expect(state.playedCardThisTurn).toBe(true)
     expect(state.players[0].field[play.slot]!.stance).toBe('active')
     expect(listLegalActions(state).some((a) => a.type === 'SKIP_MAIN')).toBe(true)
+    const second = listLegalActions(state).find(
+      (a) => a.type === 'PLAY_MONSTER' && a.stance === 'active' && a.slot !== play.slot,
+    )
+    if (!second || second.type !== 'PLAY_MONSTER') throw new Error('expected a second monster')
+    state = applyAction(state, second)
+    expect(state.players[0].field.filter(Boolean)).toHaveLength(2)
+    expect(listLegalActions(state).some((a) => a.type === 'USE_ABILITY')).toBe(false)
   })
 
   it('can play the opening monster withdrawn', () => {

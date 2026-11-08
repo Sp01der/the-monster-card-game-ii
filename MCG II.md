@@ -3,7 +3,7 @@ SET UP:
  Each player has a deck of X cards. Select 1 monster card to put on top of your deck. Shuffle the rest of your deck and draw your hand.
 
 THE FIRST TURN:
-On your first turn you may not draw any cards or use any abilities, and must play a monster.
+On your first turn you may not draw any cards or use any abilities. You may play any number of monsters from your hand, and must play at least one.
 The draw step is skipped entirely (you begin in the play step).
 Besides that, it follows the same structure as a normal turn.
 When playing a monster, place it in the front of a slot to enter active, or in the space behind that slot to enter withdrawn.

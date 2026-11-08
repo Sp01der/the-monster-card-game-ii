@@ -1,5 +1,5 @@
 import { getCard, getMonster } from './catalog'
-import { computeDamage, attackBonusFor, guardingGoldDefense, lensSuccessFaces } from './damage'
+import { computeDamage, attackBonusFor, guardingGoldDefense, lensSuccessFaces, wearsLifestealBlade } from './damage'
 import {
   applyStatus,
   checkLosses,
@@ -73,6 +73,27 @@ function rememberAggressor(
   victim.damagedByInstanceIds = [...ids, attacker.instanceId]
 }
 
+let lastDealtDamage = 0
+
+/** Damage the last dealDamageToTarget call actually applied. Raid reads this once. */
+export function takeLastDealt(): number {
+  const dealt = lastDealtDamage
+  lastDealtDamage = 0
+  return dealt
+}
+
+function healLifesteal(state: GameState, attacker: FieldMonster | null, dealt: number, stealing: boolean): void {
+  if (!stealing || dealt <= 0 || !attacker) return
+  const stillThere = state.players.some((player) =>
+    player.field.some((monster) => monster?.instanceId === attacker.instanceId),
+  )
+  if (!stillThere) return
+  const before = attacker.hp
+  attacker.hp = Math.min(attacker.maxHp, attacker.hp + 10)
+  if (attacker.hp === before) return
+  log(state, `${getMonster(attacker.defId).name} heals ${attacker.hp - before} from Lifesteal Blade (now ${attacker.hp} HP).`)
+}
+
 function applyHitPoints(monster: FieldMonster, amount: number): boolean {
   if (amount > 0 && monster.unending && monster.hp - amount <= 0) {
     monster.hp = Math.min(monster.maxHp, 10)
@@ -92,6 +113,14 @@ export function dealDamageToTarget(
   requiredEnergy = 0,
   doubleBeforeDefense = false,
 ): TargetRef | null {
+  lastDealtDamage = 0
+  if (!attacker && state.spellSourceInstanceId) {
+    for (const player of state.players) {
+      const source = player.field.find((monster) => monster?.instanceId === state.spellSourceInstanceId)
+      if (source) attacker = source
+    }
+  }
+  const stealing = attacker !== null && wearsLifestealBlade(attacker)
   target = redirectFatalHonour(
     state,
     attacker,
@@ -149,7 +178,7 @@ export function dealDamageToTarget(
         : `${resolved.player.name}'s Ice Mirror reflects the attack; ${getMonster(attacker.defId).name} takes ${amount} damage (${Math.max(0, attacker.hp)} HP left).`,
     )
     if (!endured && attacker.hp <= 0 && attackerSlot >= 0) {
-      discardMonster(state, attackerOwner, attackerSlot, 'slain')
+      discardMonster(state, attackerOwner, attackerSlot, 'slain', resolved.player.id)
     }
     checkLosses(state)
     return attackerSlot >= 0
@@ -166,6 +195,7 @@ export function dealDamageToTarget(
       return target
     }
     eq.hp -= base
+    lastDealtDamage = base
     if (base > 0) rememberAggressor(state, attacker, resolved.player.id)
     log(
       state,
@@ -174,6 +204,7 @@ export function dealDamageToTarget(
     if (eq.hp <= 0) {
       destroyEquipment(state, resolved.player, resolved.slot, target.equipmentIndex)
     }
+    healLifesteal(state, attacker, lastDealtDamage, stealing)
     checkLosses(state)
     return target
   }
@@ -191,6 +222,7 @@ export function dealDamageToTarget(
   })
 
   const endured = applyHitPoints(resolved.monster, amount)
+  lastDealtDamage = amount
   if (amount > 0) rememberAggressor(state, attacker, resolved.player.id)
   const def = getMonster(resolved.monster.defId)
   log(
@@ -212,8 +244,10 @@ export function dealDamageToTarget(
   }
 
   if (!endured && resolved.monster.hp <= 0) {
-    discardMonster(state, resolved.player, resolved.slot, 'slain')
+    const killer = attackerOwner?.id ?? state.activePlayer
+    discardMonster(state, resolved.player, resolved.slot, 'slain', killer)
   }
+  healLifesteal(state, attacker, lastDealtDamage, stealing)
   checkLosses(state)
   return target
 }
@@ -341,6 +375,7 @@ function resolveOneEffect(
           effect.stacks ?? 1,
           undefined,
           resolved.player.id === state.activePlayer,
+          state.activePlayer,
         )
       ) {
         log(
@@ -370,6 +405,7 @@ function resolveOneEffect(
           1,
           undefined,
           resolved.player.id === state.activePlayer,
+          state.activePlayer,
         )
       ) {
         log(state, `${getMonster(resolved.monster.defId).name} gains ${effect.status}.`)

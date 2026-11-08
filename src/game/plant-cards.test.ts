@@ -246,12 +246,12 @@ describe('plant cards', () => {
     let next = use(state, 'team_attack')
     expect(next.pending).toMatchObject({ kind: 'multiHit', remaining: 3, strike: 'spear' })
     next = applyAction(next, { type: 'PENDING_TARGET', target: monsterTarget(1, 1) })
-    expect(next.players[1].field[1]?.hp).toBe(80)
+    expect(next.players[1].field[1]?.hp).toBe(70)
     expect(next.pending).toMatchObject({ remaining: 2 })
   })
 
   it('poisons two adjacent cards on a 4/6', () => {
-    const state = main(game(() => 1))
+    const state = main(game(() => 6))
     put(state.players[0], 0, 'toxi_trap', { energy: 1 })
     put(state.players[1], 0, 'blob', { hp: 50 })
     put(state.players[1], 1, 'blob', { hp: 50 })

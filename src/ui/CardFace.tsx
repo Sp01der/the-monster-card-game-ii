@@ -1,6 +1,14 @@
-import { formatDamageType, getCard, getWeaknesses, grantedAbilities } from '../game'
+import {
+  formatDamageType,
+  getCard,
+  getMonster,
+  getWeaknesses,
+  grantedAbilities,
+  identityDefId,
+  monsterAbilities,
+} from '../game'
 import type { FieldMonster } from '../game'
-import { abilityLines, cardBodyText } from './cardText'
+import { abilityLines, cardBodyText, withBladeCost } from './cardText'
 import { EnergyDots } from './EnergyDots'
 
 type Props = {
@@ -17,6 +25,8 @@ type Props = {
   onAbilityClick?: (abilityId: string) => void
   /** Extra defense from Treasure Keepers while the ward has Gold. */
   extraDefense?: number
+  /** ATTACK! and similar team-wide attack bonuses for the card's controller. */
+  teamAttackBonus?: number
 }
 
 export function CardFace({
@@ -29,23 +39,37 @@ export function CardFace({
   selectedAbilityId,
   onAbilityClick,
   extraDefense = 0,
+  teamAttackBonus = 0,
 }: Props) {
   const card = getCard(defId)
 
   if (card.kind === 'monster') {
+    const identity = field ? getMonster(identityDefId(field)) : card
     const hp = field ? `${field.hp}/${field.maxHp}` : `${card.maxHp}`
     const energy = field
       ? `${field.energy}${field.pendingEnergy > 0 ? `+${field.pendingEnergy}` : ''}`
       : null
-    const lines = abilityLines(card, field ? grantedAbilities(field) : [])
+    const lines = withBladeCost(
+      abilityLines(
+        field?.shapeshiftDefId
+          ? { ...card, abilities: monsterAbilities(field).filter((ability) => ability.id !== 'spear') }
+          : card,
+        field ? grantedAbilities(field) : [],
+      ),
+      field,
+      teamAttackBonus,
+    )
     const weaknesses = field?.weaknessOverride
       ? [field.weaknessOverride]
-      : getWeaknesses(card.id)
+      : getWeaknesses(field ? identityDefId(field) : card.id)
 
     return (
       <div className={`card-face kind-monster${compact ? ' compact' : ''}`}>
         <header className="card-top">
-          <span className="card-name">{card.name}</span>
+          <span className="card-name">
+            {card.name}
+            {field?.shapeshiftDefId ? ` as ${identity.name}` : ''}
+          </span>
           <span className="card-points">{card.points}pt</span>
         </header>
         <div className="card-stats">
@@ -53,24 +77,24 @@ export function CardFace({
           {energy !== null && <span>⚡ {energy}</span>}
           {weaknesses.length > 0 && (
             <span className="tag">
-              {card.extremeWeakness ? 'extremely weak' : 'weak'}{' '}
+              {identity.extremeWeakness ? 'extremely weak' : 'weak'}{' '}
               {weaknesses.map(formatDamageType).join(' / ')}
             </span>
           )}
-          {(card.defense || extraDefense || (field?.fortifyHitsLeft ?? 0) > 0) ? (
+          {(identity.defense || extraDefense || (field?.fortifyHitsLeft ?? 0) > 0) ? (
             <span className="tag">
-              def {(card.defense ?? 0) + extraDefense + ((field?.fortifyHitsLeft ?? 0) > 0 ? 1 : 0)}
+              def {(identity.defense ?? 0) + extraDefense + ((field?.fortifyHitsLeft ?? 0) > 0 ? 1 : 0)}
             </span>
           ) : null}
-          {card.families?.includes('plant') ? <span className="tag">Plant</span> : null}
-          {card.families?.includes('woody') ? <span className="tag">Woody</span> : null}
-          {card.families?.includes('stormling') ? <span className="tag">Stormling</span> : null}
+          {identity.families?.includes('plant') ? <span className="tag">Plant</span> : null}
+          {identity.families?.includes('woody') ? <span className="tag">Woody</span> : null}
+          {identity.families?.includes('stormling') ? <span className="tag">Stormling</span> : null}
           {field && (field.shadowBonus ?? 0) > 0 ? (
             <span className="tag">shadow +{field.shadowBonus}</span>
           ) : null}
-          {card.darkCharge ? <span className="tag">Dark Charge</span> : null}
-          {card.goldAffinity ? <span className="tag">Gold Affinity</span> : null}
-          {field && card.goldAffinity ? <span>gold {field.gold ?? 0}</span> : null}
+          {identity.darkCharge ? <span className="tag">Dark Charge</span> : null}
+          {identity.goldAffinity ? <span className="tag">Gold Affinity</span> : null}
+          {field && identity.goldAffinity ? <span>gold {field.gold ?? 0}</span> : null}
         </div>
         {field && (
           <div className="card-stance-row">
@@ -132,10 +156,10 @@ export function CardFace({
             )
           })}
         </ul>
-        {card.passiveText &&
+        {(field?.shapeshiftDefId ? identity.passiveText : card.passiveText) &&
           !field?.equipment.some((eq) => eq.defId === 'colossus_keystone') && (
           <div className="card-passive">
-            <strong>Passive</strong> — {card.passiveText}
+            <strong>Passive</strong> — {field?.shapeshiftDefId ? identity.passiveText : card.passiveText}
           </div>
         )}
         {field && field.equipment.length > 0 && (

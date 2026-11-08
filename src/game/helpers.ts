@@ -1,5 +1,6 @@
-import { getCard, getMonster } from './catalog'
+import { getCard, getMonster, identityDefId } from './catalog'
 import type {
+  CardSnapshot,
   FieldMonster,
   GameState,
   HandCard,
@@ -50,6 +51,16 @@ export function log(state: GameState, message: string): void {
 }
 
 export function rollDie(state: GameState): number {
+  if (state.goldenDieFace !== undefined) {
+    const n = state.goldenDieFace
+    state.goldenDieFace = undefined
+    state.goldenDice?.shift()
+    if (n < 1 || n > 6 || !Number.isInteger(n)) {
+      throw new Error(`Golden Die face must be an integer 1-6, got ${n}`)
+    }
+    state.log.push({ message: `The Golden Die shows ${n}`, dieRoll: n })
+    return n
+  }
   const n = state.rng()
   if (n < 1 || n > 6 || !Number.isInteger(n)) {
     throw new Error(`RNG must return integer 1-6, got ${n}`)
@@ -150,7 +161,7 @@ export function hasKeystone(monster: FieldMonster): boolean {
 
 /** A Colossus with no Keystone cannot gain energy from any source. */
 export function canReceiveEnergy(monster: FieldMonster): boolean {
-  return monster.defId !== 'colossus' || hasKeystone(monster)
+  return identityDefId(monster) !== 'colossus' || hasKeystone(monster)
 }
 
 export function grantEnergy(state: GameState, monster: FieldMonster, amount: number): number {
@@ -233,6 +244,7 @@ export function applyStatus(
   stacks = 1,
   sourceInstanceId?: string,
   skipNextTick = false,
+  sourcePlayer?: PlayerId,
 ): boolean {
   if (wearsSaphireRing(monster) && NEGATIVE_STATUSES.has(kind)) return false
   const added = turns * Math.max(1, stacks)
@@ -242,17 +254,19 @@ export function applyStatus(
     if (existing) {
       existing.sourceInstanceId = sourceInstanceId
       existing.skipNextTick = skipNextTick
+      if (sourcePlayer !== undefined) existing.sourcePlayer = sourcePlayer
       return true
     }
-    monster.statuses.push({ kind, turns, skipNextTick, sourceInstanceId })
+    monster.statuses.push({ kind, turns, skipNextTick, sourceInstanceId, sourcePlayer })
     return true
   }
   const existing = monster.statuses.find((s) => s.kind === kind)
   if (existing) {
     existing.turns += added
+    if (sourcePlayer !== undefined) existing.sourcePlayer = sourcePlayer
     return true
   }
-  monster.statuses.push({ kind, turns: added, skipNextTick, sourceInstanceId })
+  monster.statuses.push({ kind, turns: added, skipNextTick, sourceInstanceId, sourcePlayer })
   return true
 }
 
@@ -289,6 +303,7 @@ export function discardMonster(
   player: PlayerState,
   slot: number,
   mode: 'slain' | 'removed',
+  slainBy?: PlayerId,
 ): void {
   const monster = player.field[slot]
   if (!monster) return
@@ -331,6 +346,22 @@ export function discardMonster(
       state,
       `${player.name}'s ${def.name} was slain (−${def.points} point${def.points === 1 ? '' : 's'}). Points: ${player.points}`,
     )
+    if (
+      monster.speakerArmed &&
+      monster.stance === 'active' &&
+      identityDefId(monster) === 'public_speaker' &&
+      slainBy !== undefined &&
+      slainBy !== player.id
+    ) {
+      for (const ally of player.field) {
+        if (ally) grantEnergy(state, ally, 1)
+      }
+      player.bonusTeamActions = (player.bonusTeamActions ?? 0) + 1
+      log(
+        state,
+        `${def.name} falls, and ${player.name}'s monsters gain 1 energy. ${player.name} may take an additional action next turn.`,
+      )
+    }
     if (monster.defId === 'big_blob' && player.points > 0) {
       if (state.pending?.kind === 'spawnBlobs') {
         if (state.pending.owner === player.id) state.pending.remaining += 2
@@ -485,4 +516,163 @@ export function collapseEmptyExtraSlots(state: GameState): void {
 
 export function defaultRng(): () => number {
   return () => Math.floor(Math.random() * 6) + 1
+}
+
+export function captureCardSnapshot(state: GameState, target: TargetRef): CardSnapshot | null {
+  const player = state.players[target.player]
+  const monster = player.field[target.slot]
+  if (!monster) return null
+  if (target.kind === 'equipment') {
+    const equipment = monster.equipment[target.equipmentIndex]
+    if (!equipment) return null
+    return {
+      instanceId: equipment.instanceId,
+      defId: equipment.defId,
+      kind: 'equipment',
+      owner: target.player,
+      slot: target.slot,
+      equipmentIndex: target.equipmentIndex,
+      hostInstanceId: monster.instanceId,
+      hp: equipment.hp,
+      maxHp: equipment.maxHp,
+      energy: 0,
+      pendingEnergy: 0,
+      stance: 'active',
+      statuses: [],
+      equipment: [],
+    }
+  }
+  return {
+    instanceId: monster.instanceId,
+    defId: monster.defId,
+    kind: 'monster',
+    owner: target.player,
+    slot: target.slot,
+    hp: monster.hp,
+    maxHp: monster.maxHp,
+    energy: monster.energy,
+    pendingEnergy: monster.pendingEnergy,
+    stance: monster.stance,
+    statuses: structuredClone(monster.statuses),
+    equipment: structuredClone(monster.equipment),
+    gold: monster.gold,
+    shadowBonus: monster.shadowBonus,
+    shapeshiftDefId: monster.shapeshiftDefId,
+    weaknessOverride: monster.weaknessOverride,
+    unending: monster.unending,
+  }
+}
+
+function exciseInstance(state: GameState, instanceId: string): void {
+  for (const player of state.players) {
+    for (const pile of [player.deck, player.hand, player.discard, player.removed]) {
+      const index = pile.findIndex((card) => card.instanceId === instanceId)
+      if (index >= 0) pile.splice(index, 1)
+    }
+    if (player.ethereal) {
+      player.ethereal = player.ethereal.filter((entry) => entry.card.instanceId !== instanceId)
+    }
+    for (const monster of player.field) {
+      if (!monster) continue
+      monster.equipment = monster.equipment.filter((equipment) => equipment.instanceId !== instanceId)
+    }
+  }
+}
+
+function parkMonster(player: PlayerState, monster: FieldMonster): void {
+  const open = player.field.findIndex((slot) => slot === null)
+  if (open >= 0) {
+    player.field[open] = monster
+    return
+  }
+  monster.ownsExtraSlot = true
+  player.field.push(monster)
+}
+
+/** Puts a remembered card back. Points already lost stay lost. */
+export function restoreSnapshot(state: GameState, snapshot: CardSnapshot): void {
+  const snap = structuredClone(snapshot)
+  if (snap.kind === 'equipment') {
+    let host: FieldMonster | null = null
+    if (snap.hostInstanceId) {
+      for (const player of state.players) {
+        for (const monster of player.field) {
+          if (monster?.instanceId === snap.hostInstanceId) host = monster
+        }
+      }
+    }
+    exciseInstance(state, snap.instanceId)
+    if (!host) {
+      state.players[snap.owner].discard.push({ instanceId: snap.instanceId, defId: snap.defId })
+      log(state, `${getCard(snap.defId).name} cannot return because its monster is gone.`)
+      return
+    }
+    const displaced = host.equipment.filter((equipment) => equipment.defId === snap.defId)
+    host.equipment = host.equipment.filter((equipment) => equipment.defId !== snap.defId)
+    const owner = state.players.find((player) => player.field.includes(host))
+    if (owner) {
+      for (const equipment of displaced) {
+        owner.discard.push({ instanceId: equipment.instanceId, defId: equipment.defId })
+      }
+    }
+    host.equipment.push({
+      instanceId: snap.instanceId,
+      defId: snap.defId,
+      hp: snap.hp,
+      maxHp: snap.maxHp,
+    })
+    log(state, `${getCard(snap.defId).name} returns to its remembered state.`)
+    return
+  }
+
+  const keep = new Set(snap.equipment.map((equipment) => equipment.instanceId))
+  let monster: FieldMonster | null = null
+  for (const player of state.players) {
+    for (let slot = 0; slot < player.field.length; slot++) {
+      const current = player.field[slot]
+      if (!current || current.instanceId !== snap.instanceId) continue
+      for (const equipment of current.equipment) {
+        if (!keep.has(equipment.instanceId)) {
+          player.discard.push({ instanceId: equipment.instanceId, defId: equipment.defId })
+        }
+      }
+      player.field[slot] = null
+      monster = current
+    }
+  }
+  exciseInstance(state, snap.instanceId)
+  for (const equipment of snap.equipment) exciseInstance(state, equipment.instanceId)
+
+  const owner = state.players[snap.owner]
+  while (owner.field.length <= snap.slot) owner.field.push(null)
+  const occupant = owner.field[snap.slot]
+  if (occupant && occupant.instanceId !== snap.instanceId) parkMonster(owner, occupant)
+
+  const restored: FieldMonster = monster ?? {
+    instanceId: snap.instanceId,
+    defId: snap.defId,
+    hp: snap.hp,
+    maxHp: snap.maxHp,
+    stance: snap.stance,
+    energy: snap.energy,
+    pendingEnergy: snap.pendingEnergy,
+    statuses: [],
+    equipment: [],
+  }
+  restored.defId = snap.defId
+  restored.hp = snap.hp
+  restored.maxHp = snap.maxHp
+  restored.stance = snap.stance
+  restored.energy = snap.energy
+  restored.pendingEnergy = snap.pendingEnergy
+  restored.statuses = snap.statuses
+  restored.equipment = snap.equipment
+  restored.gold = snap.gold
+  restored.shadowBonus = snap.shadowBonus
+  restored.shapeshiftDefId = snap.shapeshiftDefId
+  restored.weaknessOverride = snap.weaknessOverride
+  restored.unending = snap.unending
+  restored.ownsExtraSlot = snap.slot >= FIELD_SIZE ? true : restored.ownsExtraSlot
+  owner.field[snap.slot] = restored
+  log(state, `${getMonster(restored.defId).name} returns to its remembered state.`)
 }

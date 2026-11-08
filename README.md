@@ -1,6 +1,6 @@
 # MCG II Playtester
 
-Digital hotseat playtester for The Monster Card Game II.
+Digital playtester for The Monster Card Game II: hotseat on one device, or solo against a fair computer opponent.
 
 ## Run
 
@@ -21,8 +21,9 @@ npm test
 
 ## Play
 
-1. Each player starts on a themed deck (Ember and Frost). Load Tide or Gloom, or search the catalog and click cards to build your own.
+1. Each player starts on a themed deck (Ember and Frost). Load Tide, Gloom, or Foundry, or search the catalog and click cards to build your own.
 2. Save a deck to reuse it in this browser. Delete only removes a saved deck, not a starter.
 3. Choose the monster that starts on top of the deck.
-4. Start the match, then pass the device at the handoff screen so hands stay hidden.
-5. Follow the turn phases: draw → ability/play → withdraw/advance → energy → end.
+4. For hotseat: start the match, then pass the device at the handoff screen so hands stay hidden.
+5. For a computer opponent: check **Play against the computer**, optionally **Computer goes first**, build both decks, then start. Pass-the-device covers are skipped; the computer plays fair (no peeking at your hand, deck order, or upcoming dice).
+6. Follow the turn phases: draw → ability/play → withdraw/advance → energy → end.

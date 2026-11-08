@@ -198,7 +198,7 @@ describe('storm and legion cards', () => {
     const speared = use(enduring, 'legion_spear')
     expect(speared.abilityUsesLeft).toBe(1)
     expect(speared.players[0].field[0]?.extraAbilityUses).toBe(0)
-    expect(speared.players[1].field[0]?.hp).toBe(30)
+    expect(speared.players[1].field[0]?.hp).toBe(20)
 
     const struck = main(game())
     put(struck.players[0], 0, 'stormling', { energy: 1 })

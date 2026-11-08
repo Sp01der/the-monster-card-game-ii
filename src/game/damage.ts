@@ -1,4 +1,4 @@
-import { getMonster, getWeaknesses } from './catalog'
+import { getMonster, getWeaknesses, identityDefId } from './catalog'
 import { wearsSaphireRing } from './helpers'
 import type { DamageType, FieldMonster, GameState, PlayerId, PlayerState, TargetRef } from './types'
 
@@ -15,6 +15,15 @@ export function hasSpear(monster: FieldMonster): boolean {
   return monster.equipment.some((e) => e.defId === 'spear')
 }
 
+export function wearsLifestealBlade(monster: FieldMonster): boolean {
+  return monster.equipment.some((e) => e.defId === 'lifesteal_blade')
+}
+
+/** Lifesteal Blade adds one kept energy to every ability. */
+export function lifestealRequire(monster: FieldMonster, require: number): number {
+  return require + (wearsLifestealBlade(monster) ? 1 : 0)
+}
+
 export function hasFishingRod(monster: FieldMonster): boolean {
   return monster.equipment.some((e) => e.defId === 'fishing_rod')
 }
@@ -27,8 +36,23 @@ export function isIlluminated(monster: FieldMonster): boolean {
   return monster.illuminatedThisTurn === true || hasPrismLens(monster)
 }
 
-/** Prism Lens: add one unused face to a succeed/fail roll, capping at 6/6. */
+/**
+ * Prism Lens: add one face to a high-number success roll.
+ * The added face is the highest one still missing, so a top band stays contiguous.
+ */
 export function prismSuccessFaces(monster: FieldMonster | null, faces: number[]): number[] {
+  if (!monster || !hasPrismLens(monster) || faces.length >= 6) return faces
+  for (let face = 6; face >= 1; face--) {
+    if (!faces.includes(face)) return [...faces, face]
+  }
+  return faces
+}
+
+/**
+ * Prism Lens: add one face to a low-number harm trigger.
+ * The added face is the lowest one still missing, so the bottom band stays contiguous.
+ */
+export function prismHarmFaces(monster: FieldMonster | null, faces: number[]): number[] {
   if (!monster || !hasPrismLens(monster) || faces.length >= 6) return faces
   for (let face = 1; face <= 6; face++) {
     if (!faces.includes(face)) return [...faces, face]
@@ -36,19 +60,45 @@ export function prismSuccessFaces(monster: FieldMonster | null, faces: number[])
   return faces
 }
 
-/** Prism Lens: treat “roll at most N” as one face more likely to hit. */
-export function prismHitAtMost(monster: FieldMonster | null, maxInclusive: number): number {
-  if (!monster || !hasPrismLens(monster)) return maxInclusive
-  return Math.min(6, maxInclusive + 1)
-}
-
 export const lensSuccessFaces = prismSuccessFaces
+export const lensHarmFaces = prismHarmFaces
 
 export function attackBonusFor(state: GameState, attacker: FieldMonster | null): number {
+  const own = attacker?.attackBonus ?? 0
   if (!attacker || !state.players[state.activePlayer].field.some((monster) => monster?.instanceId === attacker.instanceId)) {
-    return 0
+    return own
   }
-  return state.players[state.activePlayer].attackBonus ?? 0
+  return (state.players[state.activePlayer].attackBonus ?? 0) + own
+}
+
+/**
+ * Flat attack bonuses that should be baked into printed ability damage:
+ * equipment, Gold Affinity passives, Wizrobe stacks, Cloud of Darkness, ATTACK!, etc.
+ */
+export function printedAttackBonus(
+  monster: FieldMonster,
+  opts: {
+    teamAttackBonus?: number
+    /** Empty-dot energy reserved by the ability (for Sword spare-energy). */
+    requiredEnergy?: number
+    includeShadow?: boolean
+  } = {},
+): number {
+  let bonus = monster.attackBonus ?? 0
+  bonus += opts.teamAttackBonus ?? 0
+  if (opts.includeShadow) bonus += monster.shadowBonus ?? 0
+  if (hasSpear(monster)) bonus += 10
+  if (wearsLifestealBlade(monster)) bonus += 10
+  if (hasSword(monster)) {
+    bonus += hasSpareEnergy(monster, opts.requiredEnergy ?? 0) ? 20 : 10
+  }
+  if (identityDefId(monster) === 'loot_goblin') {
+    bonus += ((monster.gold ?? 0) + monster.equipment.length) * 10
+  }
+  if (identityDefId(monster) === 'amanesian_warden') {
+    bonus += (monster.gold ?? 0) * 10
+  }
+  return bonus
 }
 
 /** Spare energy: attached energy or Gold exceeds every required empty dot. */
@@ -58,7 +108,7 @@ export function hasSpareEnergy(monster: FieldMonster, requiredEnergy: number): b
 
 /** Amanesian Warden gains +1 defense while the card it protects has Gold. */
 export function guardingGoldDefense(state: GameState, defender: FieldMonster): number {
-  if (defender.defId !== 'amanesian_warden' || !defender.protectingInstanceId) return 0
+  if (identityDefId(defender) !== 'amanesian_warden' || !defender.protectingInstanceId) return 0
   for (const player of state.players) {
     for (const monster of player.field) {
       if (monster?.instanceId === defender.protectingInstanceId && (monster.gold ?? 0) > 0) {
@@ -138,16 +188,19 @@ export function computeDamage(args: {
   if (attacker && hasSpear(attacker)) {
     amount += 10
   }
-  if (attacker?.defId === 'loot_goblin') {
+  if (attacker && wearsLifestealBlade(attacker)) {
+    amount += 10
+  }
+  if (attacker && identityDefId(attacker) === 'loot_goblin') {
     amount += ((attacker.gold ?? 0) + attacker.equipment.length) * 10
   }
-  if (attacker?.defId === 'amanesian_warden') {
+  if (attacker && identityDefId(attacker) === 'amanesian_warden') {
     amount += (attacker.gold ?? 0) * 10
   }
   if (bonusBeforeWeakness > 0) amount += bonusBeforeWeakness
   if (attacker && damageType === 'shadow') amount += attacker.shadowBonus ?? 0
 
-  const def = getMonster(defender.defId)
+  const def = getMonster(identityDefId(defender))
   if (
     damageType === 'water' &&
     !wearsSaphireRing(defender) &&
@@ -157,7 +210,7 @@ export function computeDamage(args: {
   }
   const weaknesses = defender.weaknessOverride
     ? [defender.weaknessOverride]
-    : getWeaknesses(defender.defId)
+    : getWeaknesses(identityDefId(defender))
   const ownWeakness = damageType !== 'untyped' && weaknesses.includes(damageType)
   const illuminatedLight =
     attacker !== null && weaknesses.includes('light') && isIlluminated(attacker)

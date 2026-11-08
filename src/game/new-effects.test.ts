@@ -249,7 +249,7 @@ describe('Command, Scroll of Wisdom, and Empower', () => {
 
 describe('Spear, Emerald Ring, and Fishing Rod', () => {
   it('grants Spear and lets the attached monster use it', () => {
-    const state = main(game([1]))
+    const state = main(game([6]))
     put(state.players[0], 0, 'blob', {
       energy: 1,
       equipment: [{ instanceId: 'sp', defId: 'spear', hp: 40, maxHp: 40 }],
