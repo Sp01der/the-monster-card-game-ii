@@ -70,7 +70,7 @@ describe('electric / construct catalog', () => {
     expect(getMonster('supply_construct')).toMatchObject({ points: 2, maxHp: 90, defense: 1, idleEnergy: true })
     expect(getMonster('lightning_worm')).toMatchObject({ points: 4, maxHp: 170, weakness: 'poison' })
     expect(getMonster('gladin_tunneller')).toMatchObject({ points: 4, maxHp: 170, weakness: 'water' })
-    expect(formatDamageType('sound')).toBe('sonic')
+    expect(formatDamageType('sonic')).toBe('sonic')
     expect(countsAsElectricCard('thunder_core')).toBe(true)
     expect(countsAsElectricCard('tempest_wraith')).toBe(true)
     expect(countsAsElectricCard('blob')).toBe(false)

@@ -65,10 +65,10 @@ describe('computeDamage', () => {
     expect(amount).toBe(10)
   })
 
-  it('skips defense for piercing / sound', () => {
+  it('skips defense for piercing / sonic', () => {
     const amount = computeDamage({
       base: 10,
-      damageType: 'sound',
+      damageType: 'sonic',
       attacker: mon({ defId: 'blob' }),
       defender: mon({ defId: 'ember_tortoise' }),
     })

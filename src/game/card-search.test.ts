@@ -11,7 +11,7 @@ describe('card type search', () => {
     expect(cardMatchesSearchType('gale_serpent', 'wind')).toBe(false)
     expect(cardMatchesSearchType('gale_serpent', 'poison')).toBe(true)
     expect(cardMatchesSearchType('unending_bannerman', 'electric')).toBe(false)
-    expect(cardMatchesSearchType('veyan_bard', 'sound')).toBe(true)
+    expect(cardMatchesSearchType('veyan_bard', 'sonic')).toBe(true)
     expect(cardMatchesSearchType('shadow_imp', 'shadow')).toBe(true)
     expect(cardMatchesSearchType('grief_soldier', 'shadow')).toBe(true)
     expect(cardMatchesSearchType('storm_bolts', 'electric')).toBe(true)

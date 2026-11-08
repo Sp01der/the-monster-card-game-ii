@@ -1,6 +1,14 @@
 import { getMonster, getWeaknesses, identityDefId } from './catalog'
 import { wearsSaphireRing } from './helpers'
-import type { DamageType, FieldMonster, GameState, PlayerId, PlayerState, TargetRef } from './types'
+import type {
+  DamageType,
+  EnergyCost,
+  FieldMonster,
+  GameState,
+  PlayerId,
+  PlayerState,
+  TargetRef,
+} from './types'
 
 /** Round n to nearest 10; .5 rounds away from zero in the usual half-up sense for positives. */
 export function roundToNearest10(n: number): number {
@@ -22,6 +30,26 @@ export function wearsLifestealBlade(monster: FieldMonster): boolean {
 /** Lifesteal Blade adds one kept energy to every ability. */
 export function lifestealRequire(monster: FieldMonster, require: number): number {
   return require + (wearsLifestealBlade(monster) ? 1 : 0)
+}
+
+export function strengthCount(monster: FieldMonster): number {
+  return monster.equipment.filter((equipment) => equipment.defId === 'strength').length
+}
+
+export function efficiencyCount(monster: FieldMonster): number {
+  return monster.equipment.filter((equipment) => equipment.defId === 'efficiency').length
+}
+
+/**
+ * Efficiency turns one filled + into a kept 0 on every ability, once per stone.
+ * Lifesteal Blade then adds one more kept 0.
+ */
+export function adjustedCost(monster: FieldMonster, cost: EnergyCost): EnergyCost {
+  const converted = Math.min(cost.spend, efficiencyCount(monster))
+  return {
+    require: cost.require + converted + (wearsLifestealBlade(monster) ? 1 : 0),
+    spend: cost.spend - converted,
+  }
 }
 
 export function hasFishingRod(monster: FieldMonster): boolean {
@@ -89,6 +117,7 @@ export function printedAttackBonus(
   if (opts.includeShadow) bonus += monster.shadowBonus ?? 0
   if (hasSpear(monster)) bonus += 10
   if (wearsLifestealBlade(monster)) bonus += 10
+  bonus += strengthCount(monster) * 10
   if (hasSword(monster)) {
     bonus += hasSpareEnergy(monster, opts.requiredEnergy ?? 0) ? 20 : 10
   }
@@ -147,13 +176,15 @@ export function abilityCostsTeamAction(
  * 2. Sword: +10, or +20 if attached energy exceeds the ability's requirement
  *    Spear: +10, stacking with Sword
  *    Gold Affinity passives (before defense)
- * 3. weakness ×1.5 rounded to nearest 10 (untyped never triggers)
+ * 3. weakness ×1.5, or ×2 if extremely weak, rounded to nearest 10 (untyped never triggers)
  * 4. optional double (Great Axe), after bonuses and weakness, before defense
- * 5. defense −10 per point, minimum 10 (skipped if piercing / sound)
+ * 5. defense −10 per point, minimum 10 (skipped if piercing / sonic)
  */
 export function computeDamage(args: {
   base: number
   damageType?: DamageType
+  /** One packet that counts as every listed type. */
+  damageTypes?: DamageType[]
   piercing?: boolean
   /** Empty-dot energy reserved by the ability and therefore not spare. */
   requiredEnergy?: number
@@ -168,6 +199,7 @@ export function computeDamage(args: {
   const {
     base,
     damageType = 'untyped',
+    damageTypes,
     piercing = false,
     requiredEnergy = 0,
     attacker,
@@ -177,6 +209,11 @@ export function computeDamage(args: {
     bonusBeforeWeakness = 0,
   } = args
   if (base <= 0) return 0
+  const types = damageTypes?.length
+    ? damageTypes
+    : damageType === 'untyped'
+      ? []
+      : [damageType]
   let amount = base
   if (attacker && !wearsSaphireRing(attacker) && attacker.statuses.some((status) => status.kind === 'weakened')) {
     amount = roundToNearest10(amount / 2)
@@ -191,6 +228,7 @@ export function computeDamage(args: {
   if (attacker && wearsLifestealBlade(attacker)) {
     amount += 10
   }
+  if (attacker) amount += strengthCount(attacker) * 10
   if (attacker && identityDefId(attacker) === 'loot_goblin') {
     amount += ((attacker.gold ?? 0) + attacker.equipment.length) * 10
   }
@@ -198,11 +236,11 @@ export function computeDamage(args: {
     amount += (attacker.gold ?? 0) * 10
   }
   if (bonusBeforeWeakness > 0) amount += bonusBeforeWeakness
-  if (attacker && damageType === 'shadow') amount += attacker.shadowBonus ?? 0
+  if (attacker && types.includes('shadow')) amount += attacker.shadowBonus ?? 0
 
   const def = getMonster(identityDefId(defender))
   if (
-    damageType === 'water' &&
+    types.includes('water') &&
     !wearsSaphireRing(defender) &&
     defender.statuses.some((s) => s.kind === 'wet')
   ) {
@@ -211,7 +249,7 @@ export function computeDamage(args: {
   const weaknesses = defender.weaknessOverride
     ? [defender.weaknessOverride]
     : getWeaknesses(identityDefId(defender))
-  const ownWeakness = damageType !== 'untyped' && weaknesses.includes(damageType)
+  const ownWeakness = types.some((type) => type !== 'untyped' && weaknesses.includes(type))
   const illuminatedLight =
     attacker !== null && weaknesses.includes('light') && isIlluminated(attacker)
   if (ownWeakness || illuminatedLight) {
@@ -221,11 +259,12 @@ export function computeDamage(args: {
 
   if (doubleBeforeDefense) amount *= 2
 
-  const isPiercing = piercing || damageType === 'sound'
+  const isPiercing = piercing || types.includes('sonic')
   if (!isPiercing) {
     const shieldDefense = defender.equipment.filter((e) => e.defId === 'shield').length
     const fortify = (defender.fortifyHitsLeft ?? 0) > 0 ? 1 : 0
-    const defense = (def.defense ?? 0) + shieldDefense + fortify + defenseBonus
+    const defense =
+      (def.defense ?? 0) + shieldDefense + fortify + defenseBonus + strengthCount(defender)
     if (defense > 0) {
       amount = Math.max(10, amount - defense * 10)
     }

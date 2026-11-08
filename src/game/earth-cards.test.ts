@@ -108,7 +108,7 @@ describe('damage modifiers', () => {
 })
 
 describe('Ground Shaker', () => {
-  it('hits a monster and both circle neighbors', () => {
+  it('hits a monster and both adjacent monsters', () => {
     const state = main(game())
     put(state.players[0], 0, 'breaker', { energy: 2 })
     put(state.players[1], 0, 'blob')

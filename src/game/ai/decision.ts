@@ -34,6 +34,13 @@ function pendingDecisionPlayer(pending: PendingInteraction): PlayerId {
     case 'veridianStrike':
     case 'bloodcraft':
     case 'hauntedPick':
+    case 'fireballDiscard':
+    case 'fireballShot':
+    case 'tomePick':
+    case 'tomeCast':
+    case 'summonType':
+    case 'enchantStone':
+    case 'starbeamEnergy':
     case 'goldenDie':
     case 'replayEffect':
     case 'mirrorPick':

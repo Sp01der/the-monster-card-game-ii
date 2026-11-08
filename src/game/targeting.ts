@@ -200,6 +200,32 @@ export function anyMonsterTargets(state: GameState): TargetRef[] {
   return targets
 }
 
+const UNTARGETED_EFFECTS = new Set([
+  'stormBolts',
+  'rainOfGoo',
+  'churnWaters',
+  'blizzard',
+  'iceMirror',
+  'quickMarch',
+  'starlightPortal',
+  'command',
+  'scrollWisdom',
+  'famine',
+  'treasureHoard',
+  'magicFertilizer',
+  'darklightPortal',
+  'eyeOfTheRift',
+  'goldenDie',
+  'timeWarp',
+  'recursion',
+  'mirrorPact',
+  'hauntedMists',
+])
+
+export function effectIsUntargeted(effectId: string): boolean {
+  return UNTARGETED_EFFECTS.has(effectId)
+}
+
 export function effectTargetOptions(state: GameState, effectId: string): TargetRef[][] {
   const actorId =
     state.pending?.kind === 'playCards' || state.pending?.kind === 'replayEffect'
@@ -217,6 +243,7 @@ export function effectTargetOptions(state: GameState, effectId: string): TargetR
     case 'anvil':
       return withoutProtected(state, anyCardTargets(state)).map((t) => [t])
     case 'energy_3':
+    case 'runestoneEnchant':
       return anyMonsterTargets(state).map((t) => [t])
     case 'daybreak':
       return withHostEquipment(

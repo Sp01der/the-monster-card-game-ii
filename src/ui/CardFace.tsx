@@ -27,6 +27,7 @@ type Props = {
   extraDefense?: number
   /** ATTACK! and similar team-wide attack bonuses for the card's controller. */
   teamAttackBonus?: number
+  onPassiveClick?: () => void
 }
 
 export function CardFace({
@@ -40,11 +41,13 @@ export function CardFace({
   onAbilityClick,
   extraDefense = 0,
   teamAttackBonus = 0,
+  onPassiveClick,
 }: Props) {
   const card = getCard(defId)
 
   if (card.kind === 'monster') {
     const identity = field ? getMonster(identityDefId(field)) : card
+    const strengthDefense = field?.equipment.filter((equipment) => equipment.defId === 'strength').length ?? 0
     const hp = field ? `${field.hp}/${field.maxHp}` : `${card.maxHp}`
     const energy = field
       ? `${field.energy}${field.pendingEnergy > 0 ? `+${field.pendingEnergy}` : ''}`
@@ -81,9 +84,9 @@ export function CardFace({
               {weaknesses.map(formatDamageType).join(' / ')}
             </span>
           )}
-          {(identity.defense || extraDefense || (field?.fortifyHitsLeft ?? 0) > 0) ? (
-            <span className="tag">
-              def {(identity.defense ?? 0) + extraDefense + ((field?.fortifyHitsLeft ?? 0) > 0 ? 1 : 0)}
+          {(identity.defense || extraDefense || strengthDefense || (field?.fortifyHitsLeft ?? 0) > 0) ? (
+            <span className="tag" title="Defense">
+              ⛨ {(identity.defense ?? 0) + extraDefense + strengthDefense + ((field?.fortifyHitsLeft ?? 0) > 0 ? 1 : 0)}
             </span>
           ) : null}
           {identity.families?.includes('plant') ? <span className="tag">Plant</span> : null}
@@ -108,8 +111,8 @@ export function CardFace({
             {field.protectedByInstanceId && <span className="stance-pill">protected</span>}
             {field.statuses.map((s, i) => (
               <span key={i} className={`status status-${s.kind}`}>
-                {s.kind}
-                {s.kind !== 'goo' ? ` ${s.turns}` : ''}
+                {s.kind === 'cling' ? 'immobilized' : s.kind}
+                {s.kind !== 'goo' && s.kind !== 'cling' ? ` ${s.turns}` : ''}
               </span>
             ))}
           </div>
@@ -158,9 +161,22 @@ export function CardFace({
         </ul>
         {(field?.shapeshiftDefId ? identity.passiveText : card.passiveText) &&
           !field?.equipment.some((eq) => eq.defId === 'colossus_keystone') && (
-          <div className="card-passive">
-            <strong>Passive</strong> — {field?.shapeshiftDefId ? identity.passiveText : card.passiveText}
-          </div>
+          onPassiveClick ? (
+            <button
+              type="button"
+              className="card-passive"
+              onClick={(event) => {
+                event.stopPropagation()
+                onPassiveClick()
+              }}
+            >
+              <strong>Passive</strong> — {field?.shapeshiftDefId ? identity.passiveText : card.passiveText}
+            </button>
+          ) : (
+            <div className="card-passive">
+              <strong>Passive</strong> — {field?.shapeshiftDefId ? identity.passiveText : card.passiveText}
+            </div>
+          )
         )}
         {field && field.equipment.length > 0 && (
           <div className="card-equipment">

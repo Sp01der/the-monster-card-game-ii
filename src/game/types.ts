@@ -7,12 +7,25 @@ export type DamageType =
   | 'poison'
   | 'electric'
   | 'light'
-  | 'sound'
+  | 'sonic'
   | 'blast'
   | 'shadow'
   | 'wind'
   | 'earth'
   | 'untyped'
+
+/** Elemental Summoner choices: the nine elemental types, plus plant. */
+export type SummonElement =
+  | 'fire'
+  | 'water'
+  | 'ice'
+  | 'electric'
+  | 'earth'
+  | 'wind'
+  | 'poison'
+  | 'shadow'
+  | 'light'
+  | 'plant'
 
 export type CardKind = 'monster' | 'effect' | 'equipment'
 
@@ -48,7 +61,14 @@ export type AbilityChoice =
   | 'rainGoo'
 
 export type AbilityEffect =
-  | { type: 'damage'; amount: number; damageType?: DamageType; piercing?: boolean }
+  | {
+      type: 'damage'
+      amount: number
+      damageType?: DamageType
+      /** One hit that counts as every listed type. */
+      damageTypes?: DamageType[]
+      piercing?: boolean
+    }
   | { type: 'rollDamage'; table: Record<number, number>; damageType?: DamageType }
   | { type: 'chanceBoostDamage'; base: number; boosted: number; successFaces: number[]; damageType?: DamageType }
   | { type: 'healSelf'; amount: number }
@@ -118,6 +138,8 @@ export type EquipmentDef = {
   createdOnly?: boolean
   /** Damage and destroy effects cannot remove this equipment. */
   indestructible?: boolean
+  /** Attack damage does not remove this equipment. Destroy effects still can. */
+  attackProof?: boolean
 }
 
 export type CardDef = MonsterDef | EffectDef | EquipmentDef
@@ -170,6 +192,8 @@ export type FieldMonster = {
   attackBonus?: number
   /** Pegasus Gift already moved this card this turn. */
   pegasusUsedThisTurn?: boolean
+  /** Effect card ids remembered by Tomebinder Wizard. Each id appears once. */
+  tome?: string[]
 }
 
 export type FieldEquipment = {
@@ -379,6 +403,8 @@ type PendingShape =
       kind: 'repeatGoo'
       sourcePlayer: PlayerId
       sourceSlot: number
+      /** The repeat also applies this status, matching the first splat. */
+      also?: 'burn' | 'frozen'
     }
   | {
       kind: 'trickery'
@@ -390,7 +416,9 @@ type PendingShape =
       kind: 'spawnBlobs'
       owner: PlayerId
       remaining: number
-      queue: Array<{ owner: PlayerId; remaining: number }>
+      /** Card id placed by each spawn (blob, red_blob, or blue_blob). */
+      defId: string
+      queue: Array<{ owner: PlayerId; remaining: number; defId: string }>
     }
   | {
       kind: 'rainBlobs'
@@ -503,6 +531,13 @@ type PendingShape =
       owner: PlayerId
       card: HandCard
     }
+  | { kind: 'fireballDiscard'; owner: PlayerId; slot: number }
+  | { kind: 'fireballShot'; owner: PlayerId; slot: number }
+  | { kind: 'tomePick'; owner: PlayerId; slot: number }
+  | { kind: 'tomeCast'; owner: PlayerId; slot: number; handIndex: number }
+  | { kind: 'summonType'; owner: PlayerId; slot: number }
+  | { kind: 'enchantStone'; owner: PlayerId; target: TargetRef }
+  | { kind: 'starbeamEnergy'; owner: PlayerId; slot: number }
   | {
       kind: 'goldenDie'
       owner: PlayerId
@@ -723,6 +758,14 @@ export type GameAction =
   | { type: 'BLOODCRAFT_PICK'; defId: string }
   | { type: 'HAUNTED_PICK'; instanceId: string }
   | { type: 'PEGASUS_MOVE'; slot: number; stance: Stance }
+  | { type: 'REPLACE_MONSTER'; handIndex: number; slot: number; fromDiscard?: boolean }
+  | { type: 'FIREBALL_DISCARD'; instanceId: string }
+  | { type: 'FIREBALL_SHOT'; target: TargetRef }
+  | { type: 'TOME_PICK'; defId: string }
+  | { type: 'TOME_CAST'; targets: TargetRef[] }
+  | { type: 'SUMMON_TYPE'; element: SummonElement }
+  | { type: 'ENCHANT_STONE'; defId: string }
+  | { type: 'STARBEAM_ENERGY'; target: TargetRef }
 
 export const FIELD_SIZE = 7
 export const STARTING_POINTS = 6

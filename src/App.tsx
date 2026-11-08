@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { createGame, type DeckSetup, type GameState, type PlayerId } from './game'
 import { Board } from './ui/Board'
 import { DeckBuilder, type MatchStart } from './ui/DeckBuilder'
+import { RulesCorner } from './ui/Rulebook'
 import { useComputerOpponent } from './ui/useComputerOpponent'
 import './App.css'
 
@@ -31,17 +32,20 @@ export default function App() {
     setDecks(null)
   }
 
-  if (!game) {
-    return <DeckBuilder onStart={start} />
-  }
-
   return (
-    <Board
-      state={game}
-      onChange={setGame}
-      onNewGame={newGame}
-      computerPlayer={computerPlayer}
-      thinking={thinking}
-    />
+    <>
+      {game ? (
+        <Board
+          state={game}
+          onChange={setGame}
+          onNewGame={newGame}
+          computerPlayer={computerPlayer}
+          thinking={thinking}
+        />
+      ) : (
+        <DeckBuilder onStart={start} />
+      )}
+      <RulesCorner />
+    </>
   )
 }

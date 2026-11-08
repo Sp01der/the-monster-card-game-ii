@@ -1,5 +1,48 @@
 import { highFaces } from './dice'
-import type { AbilityDef, CardDef, DamageType, FieldMonster, PlayerState } from './types'
+import type {
+  AbilityDef,
+  AbilityEffect,
+  CardDef,
+  DamageType,
+  FieldMonster,
+  PlayerState,
+  SummonElement,
+} from './types'
+
+/** One hit of these types. Sonic and blast are not elemental. */
+export const ELEMENTAL_TYPES: Exclude<SummonElement, 'plant'>[] = [
+  'fire',
+  'water',
+  'ice',
+  'electric',
+  'earth',
+  'wind',
+  'poison',
+  'shadow',
+  'light',
+]
+
+/** Elemental Summoner may also search for a plant. */
+export const SUMMON_ELEMENTS: SummonElement[] = [...ELEMENTAL_TYPES, 'plant']
+
+const REPLACEMENT_HOSTS: Record<string, string> = {
+  big_blob: 'blob',
+  big_red_blob: 'red_blob',
+  big_blue_blob: 'blue_blob',
+}
+
+/** Small blob that must be replaced to play this card. */
+export function replacementBlobHost(defId: string): string | null {
+  return REPLACEMENT_HOSTS[defId] ?? null
+}
+
+/** Card created when this big blob is slain. */
+export function deathSpawnDefId(defId: string): string | null {
+  if (defId === 'big_blob') return 'blob'
+  if (defId === 'big_red_blob') return 'red_blob'
+  if (defId === 'big_blue_blob') return 'blue_blob'
+  return null
+}
 
 /** Parse energy notation: 0 = require, + = spend. Total needed = require + spend. */
 export function parseCost(dots: string): { require: number; spend: number } {
@@ -228,7 +271,7 @@ export const CATALOG: Record<string, CardDef> = {
   big_blob: {
     kind: 'monster', id: 'big_blob', name: 'Big Blob', points: 2, maxHp: 100,
     weakness: 'water', families: ['blob'],
-    passiveText: 'When slain, place two generated Blobs in empty slots.',
+    passiveText: 'If this card is slain, create and place two Blobs.',
     abilities: [
       { id: 'wakkle', name: 'Wakkle', cost: parseCost('0+'), effects: [{ type: 'damage', amount: 30 }] },
       { id: 'big_splat', name: 'Splat', cost: parseCost('00'), special: 'bigSplat', effects: [] },
@@ -762,7 +805,7 @@ export const CATALOG: Record<string, CardDef> = {
     kind: 'monster', id: 'veyan_bard', name: 'Veyan Bard', points: 2, maxHp: 90,
     abilities: [
       { id: 'overdramatic_solo', name: 'Over-dramatic Solo', cost: parseCost('0'),
-        effects: [{ type: 'rollDamage', table: { 1: 10, 2: 20, 3: 20, 4: 20, 5: 20, 6: 30 }, damageType: 'sound' }] },
+        effects: [{ type: 'rollDamage', table: { 1: 10, 2: 20, 3: 20, 4: 20, 5: 20, 6: 30 }, damageType: 'sonic' }] },
       { id: 'attracting_melody', name: 'Attracting Melody', cost: parseCost('00'), special: 'drawTwo', effects: [] },
       { id: 'magic_music', name: 'Magic Music', cost: parseCost('0+'), special: 'magicMusic', effects: [] },
     ],
@@ -783,7 +826,7 @@ export const CATALOG: Record<string, CardDef> = {
     kind: 'monster', id: 'boneling', name: 'Boneling', points: 0, maxHp: 30,
     darkCharge: true,
     passiveText:
-      'While you control a Boneling, your opponent can only target your Bonelings (ranged and any-card attacks ignore this). A Boneling cannot withdraw; if it would, it dies instead.',
+      'While you control a Boneling, your opponent can only target your Bonelings (ranged and any-card attacks ignore this). A Boneling cannot withdraw; if it would, it is slain instead.',
     abilities: [
       { id: 'hollow_scratch', name: 'Hollow Scratch', cost: parseCost('0'),
         effects: [{ type: 'damage', amount: 20, damageType: 'shadow' }] },
@@ -949,8 +992,8 @@ export const CATALOG: Record<string, CardDef> = {
     abilities: [
       { id: 'sonic_blast', name: 'Sonic Blast', cost: parseCost('0+++'),
         targetMode: 'anyMonster',
-        effects: [{ type: 'damage', amount: 60, damageType: 'sound' }] },
-      { id: 'sound_wave', name: 'Sound Wave', cost: parseCost('00++'),
+        effects: [{ type: 'damage', amount: 60, damageType: 'sonic' }] },
+      { id: 'sound_wave', name: 'Sonic Wave', cost: parseCost('00++'),
         special: 'soundWave', effects: [] },
     ],
   },
@@ -1180,7 +1223,7 @@ export const CATALOG: Record<string, CardDef> = {
   public_speaker: {
     kind: 'monster', id: 'public_speaker', name: 'Public Speaker', points: 2, maxHp: 80,
     passiveText:
-      'While active, if this card is killed by an opponent then all your monsters gain 1 energy, and you may take an additional action on your next turn.',
+      'While active, if this card is slain by an opponent then all your monsters gain 1 energy, and you may take an additional action on your next turn.',
     abilities: [
       { id: 'speaker_rally', name: 'Rally', cost: parseCost('0'), special: 'speakerRally', effects: [] },
       { id: 'uprising', name: 'Uprising', cost: parseCost('+++'), special: 'uprising', effects: [] },
@@ -1212,6 +1255,95 @@ export const CATALOG: Record<string, CardDef> = {
       { id: 'magic_missile', name: 'Magic Missile', cost: parseCost('00'), ranged: true,
         effects: [{ type: 'damage', amount: 20 }] },
       { id: 'spell_casting', name: 'Spell Casting', cost: parseCost('0+'), special: 'spellCasting', effects: [] },
+    ],
+  },
+  tomebinder_wizard: {
+    kind: 'monster', id: 'tomebinder_wizard', name: 'Tomebinder Wizard', points: 3, maxHp: 100,
+    passiveText:
+      "Every effect card you play while this card is in play is remembered in this card's Tome. The Tome may be viewed by clicking on this passive.",
+    abilities: [
+      { id: 'fireball', name: 'Fireball', cost: parseCost('00'), ranged: true, special: 'fireball', effects: [] },
+      { id: 'arcane_tome', name: 'Arcane Tome', cost: parseCost('00'), special: 'arcaneTome', effects: [] },
+    ],
+  },
+  elemental_summoner: {
+    kind: 'monster', id: 'elemental_summoner', name: 'Elemental Summoner', points: 3, maxHp: 100,
+    weakness: 'sonic',
+    abilities: [
+      { id: 'summon', name: 'Summon', cost: parseCost('0+'), special: 'summonElement', effects: [] },
+      { id: 'elemental_blast', name: 'Elemental Blast', cost: parseCost('++'),
+        effects: [{ type: 'damage', amount: 30, damageTypes: [...ELEMENTAL_TYPES] }] },
+    ],
+  },
+  runestone_enchantress: {
+    kind: 'monster', id: 'runestone_enchantress', name: 'Runestone Enchantress', points: 3, maxHp: 100,
+    abilities: [
+      { id: 'enchant_stone', name: 'Enchant', cost: parseCost('0+'), special: 'enchantMonster',
+        targetMode: 'anyMonster', effects: [] },
+    ],
+  },
+  resilience: {
+    kind: 'equipment', id: 'resilience', name: 'Resilience', maxHp: 20,
+    equipmentId: 'resilience', createdOnly: true, attackProof: true,
+  },
+  strength: {
+    kind: 'equipment', id: 'strength', name: 'Strength', maxHp: 20,
+    equipmentId: 'strength', createdOnly: true, attackProof: true,
+  },
+  efficiency: {
+    kind: 'equipment', id: 'efficiency', name: 'Efficiency', maxHp: 20,
+    equipmentId: 'efficiency', createdOnly: true, attackProof: true,
+  },
+  enchant: {
+    kind: 'effect', id: 'enchant', name: 'Enchant', effectId: 'runestoneEnchant',
+  },
+  shadow_sprite: {
+    kind: 'monster', id: 'shadow_sprite', name: 'Shadow Sprite', points: 2, maxHp: 90,
+    weakness: 'light', darkCharge: true,
+    abilities: [
+      { id: 'black_touch', name: 'Black Touch', cost: parseCost('0'),
+        effects: [{ type: 'damage', amount: 20, damageType: 'shadow' }] },
+      { id: 'vile_shadows', name: 'Vile Shadows', cost: parseCost('++'), effects: [
+        { type: 'damage', amount: 10, damageType: 'shadow' },
+        { type: 'status', status: 'weakened', turns: 2 },
+      ] },
+    ],
+  },
+  starbeam_elemental: {
+    kind: 'monster', id: 'starbeam_elemental', name: 'Starbeam Elemental', points: 2, maxHp: 90,
+    abilities: [
+      { id: 'elemental_shard', name: 'Elemental Shard', cost: parseCost('0'),
+        effects: [{ type: 'damage', amount: 20, damageTypes: [...ELEMENTAL_TYPES] }] },
+      { id: 'ancient_powers', name: 'Ancient Powers', cost: parseCost('00+'), special: 'ancientPowers', effects: [] },
+    ],
+  },
+  blue_blob: {
+    kind: 'monster', id: 'blue_blob', name: 'Blue Blob', points: 2, maxHp: 70,
+    defense: 1, weakness: 'water', families: ['blob'],
+    abilities: [
+      { id: 'blue_wakkle', name: 'Blue Wakkle', cost: parseCost('+'),
+        effects: [{ type: 'damage', amount: 20, damageType: 'ice' }] },
+      { id: 'freezing_goop', name: 'Freezing Goop', cost: parseCost('00'), special: 'freezingGoop', effects: [] },
+    ],
+  },
+  big_red_blob: {
+    kind: 'monster', id: 'big_red_blob', name: 'Big Red Blob', points: 2, maxHp: 110,
+    weakness: 'water', families: ['blob'],
+    passiveText: 'If this card is slain, create and place two Red Blobs.',
+    abilities: [
+      { id: 'big_red_wakkle', name: 'Red Wakkle', cost: parseCost('0+'),
+        effects: [{ type: 'damage', amount: 40, damageType: 'fire' }] },
+      { id: 'big_red_splat', name: 'Splat', cost: parseCost('00'), special: 'bigRedSplat', effects: [] },
+    ],
+  },
+  big_blue_blob: {
+    kind: 'monster', id: 'big_blue_blob', name: 'Big Blue Blob', points: 2, maxHp: 110,
+    defense: 1, weakness: 'water', families: ['blob'],
+    passiveText: 'If this card is slain, create and place two Blue Blobs.',
+    abilities: [
+      { id: 'big_blue_wakkle', name: 'Blue Wakkle', cost: parseCost('0+'),
+        effects: [{ type: 'damage', amount: 30, damageType: 'ice' }] },
+      { id: 'big_blue_splat', name: 'Splat', cost: parseCost('00'), special: 'bigBlueSplat', effects: [] },
     ],
   },
 }
@@ -1274,20 +1406,28 @@ const FIRE_BLAST_SPECIALS = new Set([
   'stampede',
   'rocket',
   'chaosFireworks',
+  'fireball',
 ])
+
+function listedDamageTypes(effect: AbilityEffect): DamageType[] {
+  if (effect.type === 'damage') {
+    return [...(effect.damageTypes ?? []), ...(effect.damageType ? [effect.damageType] : [])]
+  }
+  if (effect.type === 'rollDamage' || effect.type === 'chanceBoostDamage') {
+    return effect.damageType ? [effect.damageType] : []
+  }
+  return []
+}
 
 function abilityDealsFireOrBlast(ability: AbilityDef): boolean {
   if (ability.special && FIRE_BLAST_SPECIALS.has(ability.special)) return true
   if (['fire_punch', 'overheat', 'explode', 'red_wakkle', 'fire_sword', 'burning_buck'].includes(ability.id)) {
     return true
   }
-  return ability.effects.some(
-    (effect) =>
-      (effect.type === 'damage' ||
-        effect.type === 'rollDamage' ||
-        effect.type === 'chanceBoostDamage') &&
-      (effect.damageType === 'fire' || effect.damageType === 'blast'),
-  )
+  return ability.effects.some((effect) => {
+    const types = listedDamageTypes(effect)
+    return types.includes('fire') || types.includes('blast')
+  })
 }
 
 export function hasFireOrBlastAttack(defId: string): boolean {
@@ -1313,7 +1453,7 @@ export const BREWABLE_WEAKNESSES: DamageType[] = [
   'poison',
   'electric',
   'light',
-  'sound',
+  'sonic',
   'blast',
   'shadow',
   'wind',
@@ -1321,7 +1461,6 @@ export const BREWABLE_WEAKNESSES: DamageType[] = [
 ]
 
 export function formatDamageType(type: DamageType): string {
-  if (type === 'sound') return 'sonic'
   return type
 }
 
@@ -1329,10 +1468,7 @@ function abilityInflictsOrBoostsPoison(ability: AbilityDef): boolean {
   if (ability.special === 'bottleToxins') return true
   return ability.effects.some(
     (effect) =>
-      ((effect.type === 'damage' ||
-        effect.type === 'rollDamage' ||
-        effect.type === 'chanceBoostDamage') &&
-        effect.damageType === 'poison') ||
+      listedDamageTypes(effect).includes('poison') ||
       ((effect.type === 'status' || effect.type === 'chanceStatus') && effect.status === 'poison'),
   )
 }
@@ -1465,13 +1601,7 @@ function abilityDealsDamageType(
   specials: Set<string>,
 ): boolean {
   if (ability.special && specials.has(ability.special)) return true
-  return ability.effects.some(
-    (effect) =>
-      (effect.type === 'damage' ||
-        effect.type === 'rollDamage' ||
-        effect.type === 'chanceBoostDamage') &&
-      effect.damageType === type,
-  )
+  return ability.effects.some((effect) => listedDamageTypes(effect).includes(type))
 }
 
 function abilityDealsElectric(ability: AbilityDef): boolean {
@@ -1540,10 +1670,12 @@ const SPECIAL_DAMAGE_TYPES: Record<string, Exclude<DamageType, 'untyped'>[]> = {
   groundShaker: ['earth'],
   underground: ['earth'],
   quake: ['earth'],
-  magicMusic: ['sound'],
-  soundWave: ['sound'],
+  magicMusic: ['sonic'],
+  soundWave: ['sonic'],
   rocket: ['blast'],
   chaosFireworks: ['blast'],
+  fireball: ['blast'],
+  ancientPowers: [...ELEMENTAL_TYPES],
 }
 
 const EFFECT_DAMAGE_TYPES: Record<string, Exclude<DamageType, 'untyped'>[]> = {
@@ -1556,14 +1688,8 @@ function abilitySearchDamageTypes(ability: AbilityDef): Exclude<DamageType, 'unt
   const types: Exclude<DamageType, 'untyped'>[] = []
   if (ability.special) types.push(...(SPECIAL_DAMAGE_TYPES[ability.special] ?? []))
   for (const effect of ability.effects) {
-    if (
-      (effect.type === 'damage' ||
-        effect.type === 'rollDamage' ||
-        effect.type === 'chanceBoostDamage') &&
-      effect.damageType &&
-      effect.damageType !== 'untyped'
-    ) {
-      types.push(effect.damageType)
+    for (const type of listedDamageTypes(effect)) {
+      if (type !== 'untyped') types.push(type)
     }
   }
   return types

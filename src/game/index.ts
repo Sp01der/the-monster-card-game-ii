@@ -19,6 +19,9 @@ export {
   canUseDarkCharge,
   formatDamageType,
   cardMatchesSearchType,
+  ELEMENTAL_TYPES,
+  SUMMON_ELEMENTS,
+  replacementBlobHost,
   countsAsElectricCard,
   countElectricCardsInPlay,
 } from './catalog'
@@ -26,6 +29,7 @@ export {
   computeDamage,
   guardingGoldDefense,
   printedAttackBonus,
+  adjustedCost,
   roundToNearest10,
   getAdjacentSlots,
   getAdjacentTargets,

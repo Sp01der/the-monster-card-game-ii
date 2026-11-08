@@ -5,6 +5,7 @@ import {
   formatDamageType,
   getCard,
   getMonster,
+  identityDefId,
   guardingGoldDefense,
   isUndoablePhaseAction,
   monsterAbilities,
@@ -206,9 +207,9 @@ function describeAction(state: GameState, action: GameAction): string {
     case 'PLASMA_FIRE':
       return 'Fire Plasma Cannon'
     case 'SOUND_WAVE_TARGET':
-      return 'Choose Sound Wave target'
+      return 'Choose Sonic Wave target'
     case 'SOUND_WAVE_FINISH':
-      return 'Finish Sound Wave'
+      return 'Finish Sonic Wave'
     case 'ELDERS_PICK':
       return 'Place this card next'
     case 'BEGIN_KEYSTONE':
@@ -273,6 +274,22 @@ function describeAction(state: GameState, action: GameAction): string {
       return 'Destroy this card'
     case 'PEGASUS_MOVE':
       return action.stance === 'withdrawn' ? 'Pegasus withdraw' : 'Pegasus advance'
+    case 'REPLACE_MONSTER':
+      return 'Replace this Blob'
+    case 'FIREBALL_DISCARD':
+      return 'Discard for Fireball'
+    case 'FIREBALL_SHOT':
+      return 'Fireball'
+    case 'TOME_PICK':
+      return `Cast ${getCard(action.defId).name}`
+    case 'TOME_CAST':
+      return 'Cast the Tome copy'
+    case 'SUMMON_TYPE':
+      return `Summon ${action.element}`
+    case 'ENCHANT_STONE':
+      return `Attach ${getCard(action.defId).name}`
+    case 'STARBEAM_ENERGY':
+      return 'Grant 1 energy'
   }
 }
 
@@ -318,6 +335,7 @@ export function Board({
   const [discardView, setDiscardView] = useState<0 | 1 | null>(null)
   /** Card chosen in the Darklight Portal modal before pressing Play. */
   const [darklightPick, setDarklightPick] = useState<number | null>(null)
+  const [tomeView, setTomeView] = useState<{ playerId: PlayerId; slot: number } | null>(null)
   const legal = useMemo(() => listLegalActions(state), [state])
   const chooser = decisionPlayer(state)
   const vsComputer = computerPlayer !== null
@@ -529,7 +547,9 @@ export function Board({
     prompt =
       state.pending.mirrorRole === 'self'
         ? 'You may play your free copy, or skip it.'
-        : `${state.players[state.pending.owner].name} plays a free copy.`
+        : state.pending.monstersOnly
+          ? 'You may play a monster for free, or finish.'
+          : `${state.players[state.pending.owner].name} plays a free copy.`
   } else if (state.pending?.kind === 'assignGold') {
     prompt = `Give this gold to a Gold Affinity card (${state.pending.remaining} remaining).`
     for (const action of legal) {
@@ -595,7 +615,7 @@ export function Board({
       }
     }
   } else if (state.pending?.kind === 'soundWave') {
-    prompt = `Choose Sound Wave targets (${state.pending.chosenInstanceIds.length}/3), then finish.`
+    prompt = `Choose Sonic Wave targets (${state.pending.chosenInstanceIds.length}/3), then finish.`
     for (const a of legal) {
       if (a.type === 'SOUND_WAVE_TARGET') highlightTargets.add(targetKey(a.target))
     }
@@ -650,13 +670,21 @@ export function Board({
     const card = active.hand[sel.handIndex]
     const def = getCard(card.defId)
     if (def.kind === 'monster') {
-      prompt =
-        def.id === 'boneling'
+      const replacing = legal.some(
+        (action) => action.type === 'REPLACE_MONSTER' && action.handIndex === sel.handIndex,
+      )
+      prompt = replacing
+        ? 'Replace a matching Blob. It is discarded, and its equipment stays.'
+        : def.id === 'boneling'
           ? 'Place this Boneling on the front. It cannot withdraw.'
           : 'Place on the front (active) or back (withdrawn) of an empty slot.'
       for (const a of legal) {
         if (a.type === 'PLAY_MONSTER' && a.handIndex === sel.handIndex) {
           highlightTargets.add(`slot-${active.id}-${a.slot}-${a.stance}`)
+        }
+        if (a.type === 'REPLACE_MONSTER' && a.handIndex === sel.handIndex) {
+          const host = active.field[a.slot]
+          if (host) highlightTargets.add(`slot-${active.id}-${a.slot}-${host.stance}`)
         }
       }
     } else if (def.kind === 'equipment') {
@@ -749,6 +777,31 @@ export function Board({
     prompt = 'Choose an equipment to create and attach.'
   } else if (state.pending?.kind === 'hauntedPick') {
     prompt = 'Destroy a card in your discard. Haunted Mists then stays in play.'
+  } else if (state.pending?.kind === 'fireballDiscard') {
+    prompt = 'Discard a card for Fireball.'
+  } else if (state.pending?.kind === 'fireballShot') {
+    prompt = 'Choose a target for Fireball.'
+    for (const action of legal) {
+      if (action.type === 'FIREBALL_SHOT') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'tomePick') {
+    prompt = 'Choose a card from the Tome. A copy is played immediately.'
+  } else if (state.pending?.kind === 'tomeCast') {
+    prompt = 'Choose the target for the Tome copy.'
+    for (const action of legal) {
+      if (action.type === 'TOME_CAST') {
+        for (const target of action.targets) highlightTargets.add(targetKey(target))
+      }
+    }
+  } else if (state.pending?.kind === 'summonType') {
+    prompt = 'Choose an elemental type, or plant.'
+  } else if (state.pending?.kind === 'enchantStone') {
+    prompt = 'Choose a Runestone to attach.'
+  } else if (state.pending?.kind === 'starbeamEnergy') {
+    prompt = 'Choose an adjacent card to gain 1 energy.'
+    for (const action of legal) {
+      if (action.type === 'STARBEAM_ENERGY') highlightTargets.add(targetKey(action.target))
+    }
   } else if (state.pending?.kind === 'march') {
     prompt = 'Click your cards to withdraw or advance them, then finish.'
     for (const action of legal) {
@@ -894,6 +947,30 @@ export function Board({
       if (action) dispatch(action)
       return
     }
+    if (state.pending?.kind === 'fireballShot') {
+      const action = legal.find(
+        (a) => a.type === 'FIREBALL_SHOT' && actionsEqualTargets(a.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'starbeamEnergy') {
+      const action = legal.find(
+        (a) => a.type === 'STARBEAM_ENERGY' && actionsEqualTargets(a.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'tomeCast') {
+      const action = legal.find(
+        (a) =>
+          a.type === 'TOME_CAST' &&
+          a.targets.length === 1 &&
+          actionsEqualTargets(a.targets[0], clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
     if (state.pending?.kind === 'cloudBless') {
       const action = legal.find(
         (a) => a.type === 'CLOUD_BLESS' && actionsEqualTargets(a.target, clicked),
@@ -940,6 +1017,17 @@ export function Board({
       return
     }
     if (sel.kind === 'hand') {
+      const replace = legal.find(
+        (action) =>
+          action.type === 'REPLACE_MONSTER' &&
+          action.handIndex === sel.handIndex &&
+          action.slot === slot &&
+          playerId === active.id,
+      )
+      if (replace) {
+        dispatch(replace)
+        return
+      }
       if (stance) {
         const playMon = legal.find(
           (a) =>
@@ -1398,13 +1486,14 @@ export function Board({
         onSlotClick={inputLocked ? () => {} : onFieldSlotClick}
         onEquipmentClick={inputLocked ? () => {} : onEquipmentClick}
         onAbilityClick={inputLocked ? () => {} : onAbilityClick}
+        onViewTome={(playerId, slot) => setTomeView({ playerId, slot })}
         legal={inputLocked ? [] : legal}
         selectedAbility={null}
       />
 
       <section className="center-panel">
         <p className="prompt">{prompt}{rallyFirst ? ' Now choose the second monster.' : ''}</p>
-        {legal.some((action) => action.type === 'PEGASUS_MOVE' || action.type === 'VERIDIAN_PAY' || action.type === 'BLOODCRAFT_PICK' || action.type === 'HAUNTED_PICK') && (
+        {legal.some((action) => action.type === 'PEGASUS_MOVE' || action.type === 'VERIDIAN_PAY' || action.type === 'BLOODCRAFT_PICK' || action.type === 'HAUNTED_PICK' || action.type === 'FIREBALL_DISCARD' || action.type === 'TOME_PICK' || action.type === 'SUMMON_TYPE' || action.type === 'ENCHANT_STONE') && (
           <div className="chip-row">
             {legal.flatMap((action) => {
               if (action.type === 'PEGASUS_MOVE') {
@@ -1435,6 +1524,30 @@ export function Board({
                 return [(
                   <button key={action.instanceId} type="button" className="chip" onClick={() => dispatch(action)}>
                     Destroy {card ? getCard(card.defId).name : 'card'}
+                  </button>
+                )]
+              }
+              if (action.type === 'FIREBALL_DISCARD') {
+                const card = active.hand.find((entry) => entry.instanceId === action.instanceId)
+                return [(
+                  <button key={action.instanceId} type="button" className="chip" onClick={() => dispatch(action)}>
+                    Discard {card ? getCard(card.defId).name : 'card'}
+                  </button>
+                )]
+              }
+              if (
+                action.type === 'TOME_PICK' ||
+                action.type === 'SUMMON_TYPE' ||
+                action.type === 'ENCHANT_STONE'
+              ) {
+                return [(
+                  <button
+                    key={`${action.type}-${'defId' in action ? action.defId : action.element}`}
+                    type="button"
+                    className="chip"
+                    onClick={() => dispatch(action)}
+                  >
+                    {describeAction(state, action)}
                   </button>
                 )]
               }
@@ -1821,6 +1934,7 @@ export function Board({
         onSlotClick={inputLocked ? () => {} : onFieldSlotClick}
         onEquipmentClick={inputLocked ? () => {} : onEquipmentClick}
         onAbilityClick={inputLocked ? () => {} : onAbilityClick}
+        onViewTome={(playerId, slot) => setTomeView({ playerId, slot })}
         legal={inputLocked ? [] : legal}
         selectedAbility={
           sel.kind === 'ability' ||
@@ -1849,7 +1963,8 @@ export function Board({
                   (a) =>
                     (a.type === 'PLAY_MONSTER' ||
                       a.type === 'PLAY_EFFECT' ||
-                      a.type === 'PLAY_EQUIPMENT') &&
+                      a.type === 'PLAY_EQUIPMENT' ||
+                      a.type === 'REPLACE_MONSTER') &&
                     !a.fromDiscard &&
                     a.handIndex === handIndex,
                 ))
@@ -1968,7 +2083,8 @@ export function Board({
                   (a) =>
                     (a.type === 'PLAY_MONSTER' ||
                       a.type === 'PLAY_EFFECT' ||
-                      a.type === 'PLAY_EQUIPMENT') &&
+                      a.type === 'PLAY_EQUIPMENT' ||
+                      a.type === 'REPLACE_MONSTER') &&
                     a.fromDiscard &&
                     a.handIndex === discardIndex,
                 )
@@ -1988,6 +2104,35 @@ export function Board({
                 )
               })}
             </div>
+          </div>
+        </div>
+      )}
+
+      {tomeView && (
+        <div className="modal-backdrop" onClick={() => setTomeView(null)} role="presentation">
+          <div
+            className="modal-panel"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-label="Tome"
+          >
+            <header className="modal-header">
+              <h2>Tome</h2>
+              <button type="button" className="secondary" onClick={() => setTomeView(null)}>
+                Close
+              </button>
+            </header>
+            {(state.players[tomeView.playerId].field[tomeView.slot]?.tome ?? []).length === 0 ? (
+              <p className="muted">Empty.</p>
+            ) : (
+              <div className="discard-grid">
+                {state.players[tomeView.playerId].field[tomeView.slot]?.tome?.map((defId) => (
+                  <div key={defId} className={`tcg-card kind-${getCard(defId).kind}`}>
+                    <CardFace defId={defId} />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2112,7 +2257,7 @@ export function Board({
             <header className="modal-header">
               <h2>Destroy a discarded card</h2>
             </header>
-            <p className="muted">It is removed from the game, then you place a Boneling.</p>
+            <p className="muted">It is destroyed, then you place a Boneling.</p>
             <div className="discard-grid">
               {state.players[state.pending.owner].discard.map((card) => (
                 <button
@@ -2489,6 +2634,7 @@ function PlayerRow({
   onSlotClick,
   onEquipmentClick,
   onAbilityClick,
+  onViewTome,
   legal,
   selectedAbility,
 }: {
@@ -2504,6 +2650,7 @@ function PlayerRow({
   onSlotClick: (playerId: 0 | 1, slot: number, stance?: Stance) => void
   onEquipmentClick: (playerId: 0 | 1, slot: number, equipmentIndex: number) => void
   onAbilityClick: (playerId: 0 | 1, slot: number, abilityId: string) => void
+  onViewTome: (playerId: 0 | 1, slot: number) => void
   legal: GameAction[]
   selectedAbility: { slot: number; abilityId: string } | null
 }) {
@@ -2620,6 +2767,11 @@ function PlayerRow({
                   onAbilityClick={
                     you ? (abilityId) => onAbilityClick(player.id, slot, abilityId) : undefined
                   }
+                  onPassiveClick={
+                    identityDefId(monster) === 'tomebinder_wizard'
+                      ? () => onViewTome(player.id, slot)
+                      : undefined
+                  }
                 />
               </div>
             ) : null
@@ -2706,6 +2858,11 @@ function PlayerRow({
                   onAbilityClick={
                     you
                       ? (abilityId) => onAbilityClick(player.id, protectorIndex, abilityId)
+                      : undefined
+                  }
+                  onPassiveClick={
+                    identityDefId(protector) === 'tomebinder_wizard'
+                      ? () => onViewTome(player.id, protectorIndex)
                       : undefined
                   }
                 />

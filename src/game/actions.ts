@@ -5,6 +5,8 @@ import {
   countsAsElementalCard,
   getCard,
   getMonster,
+  replacementBlobHost,
+  SUMMON_ELEMENTS,
   identityDefId,
   hasDarkCharge,
   hasGoldAffinity,
@@ -16,7 +18,7 @@ import {
   monsterAbilities,
 } from './catalog'
 import { abilityNeedsChoice, abilityNeedsTarget } from './combat'
-import { abilityCostsTeamAction, getCircleAdjacent, lifestealRequire } from './damage'
+import { abilityCostsTeamAction, adjustedCost, getCircleAdjacent } from './damage'
 import {
   activePlayer,
   canAfford,
@@ -35,6 +37,7 @@ import {
 } from './helpers'
 import {
   abilityTargets,
+  effectIsUntargeted,
   anyCardTargets,
   anyMonsterTargets,
   canUseAbilityWhileWithdrawn,
@@ -86,6 +89,8 @@ const DAMAGE_SPECIALS = new Set([
   'scent',
   'burningSpear',
   'vineWhip',
+  'ancientPowers',
+  'fireball',
 ])
 
 function abilityDealsDamage(ability: AbilityDef): boolean {
@@ -108,27 +113,7 @@ function canForgeKeystone(player: PlayerState): boolean {
 }
 
 function noTargetEffect(effectId: string): boolean {
-  return [
-    'stormBolts',
-    'rainOfGoo',
-    'churnWaters',
-    'blizzard',
-    'iceMirror',
-    'quickMarch',
-    'starlightPortal',
-    'command',
-    'scrollWisdom',
-    'famine',
-    'treasureHoard',
-    'magicFertilizer',
-    'darklightPortal',
-    'eyeOfTheRift',
-    'goldenDie',
-    'timeWarp',
-    'recursion',
-    'mirrorPact',
-    'hauntedMists',
-  ].includes(effectId)
+  return effectIsUntargeted(effectId)
 }
 
 const EXTRA_COST_SPECIALS = new Set([
@@ -159,10 +144,9 @@ function expandGoldPayments(state: GameState, actions: GameAction[]): GameAction
         ? chaosFireworksSpend(player, action.slot)
         : ability.cost.spend
     const extraCost = EXTRA_COST_SPECIALS.has(ability.special ?? '') ? (action.extraEnergy ?? 0) : 0
-    const require = lingering
-      ? lifestealRequire(monster, ability.cost.require) + printedSpend + extraCost
-      : lifestealRequire(monster, ability.cost.require)
-    const spend = lingering ? 0 : printedSpend + extraCost
+    const priced = adjustedCost(monster, { require: ability.cost.require, spend: printedSpend })
+    const require = lingering ? priced.require + priced.spend + extraCost : priced.require
+    const spend = lingering ? 0 : priced.spend + extraCost
     const payments = goldPayments(monster, require, spend)
     if (payments.length === 0) continue
     if (payments.length === 1 && payments[0].goldRequire === 0 && payments[0].goldSpend === 0) {
@@ -192,6 +176,20 @@ function listPilePlayActions(
     const card = cards[handIndex]
     const def = getCard(card.defId)
     if (def.kind === 'monster') {
+      const hostId = replacementBlobHost(def.id)
+      if (hostId) {
+        for (let slot = 0; slot < player.field.length; slot++) {
+          if (player.field[slot]?.defId === hostId) {
+            actions.push({
+              type: 'REPLACE_MONSTER',
+              handIndex,
+              slot,
+              ...(fromDiscard ? { fromDiscard: true } : {}),
+            })
+          }
+        }
+        continue
+      }
       if (emptySlots(player).length === 0) continue
       for (const slot of emptySlots(player)) {
         for (const stance of playStances(def.id)) {
@@ -226,7 +224,7 @@ function listPilePlayActions(
     } else if (def.kind === 'equipment') {
       for (let slot = 0; slot < player.field.length; slot++) {
         const monster = monsterAt(player, slot)
-        if (monster && !monster.equipment.some((e) => e.defId === def.id)) {
+        if (monster && (def.attackProof || !monster.equipment.some((e) => e.defId === def.id))) {
           actions.push({
             type: 'PLAY_EQUIPMENT',
             handIndex,
@@ -741,14 +739,72 @@ function collectLegalActions(state: GameState): GameAction[] {
         defId,
       }))
     }
+    if (pending.kind === 'fireballDiscard') {
+      return state.players[pending.owner].hand.map((card) => ({
+        type: 'FIREBALL_DISCARD' as const,
+        instanceId: card.instanceId,
+      }))
+    }
+    if (pending.kind === 'fireballShot') {
+      const wizard = state.players[pending.owner].field[pending.slot]
+      if (!wizard) return []
+      const ability = monsterAbilities(wizard).find((candidate) => candidate.id === 'fireball')
+      if (!ability) return []
+      return withoutProtected(state, abilityTargets(state, pending.owner, wizard, ability)).map(
+        (target) => ({ type: 'FIREBALL_SHOT' as const, target }),
+      )
+    }
+    if (pending.kind === 'tomePick') {
+      const wizard = state.players[pending.owner].field[pending.slot]
+      return (wizard?.tome ?? []).map((defId) => ({ type: 'TOME_PICK' as const, defId }))
+    }
+    if (pending.kind === 'tomeCast') {
+      const owner = state.players[pending.owner]
+      const card = owner.hand[pending.handIndex]
+      if (!card) return []
+      const def = getCard(card.defId)
+      if (def.kind !== 'effect') return []
+      return effectTargetOptions(state, def.effectId).map((targets) => ({
+        type: 'TOME_CAST' as const,
+        targets,
+      }))
+    }
+    if (pending.kind === 'summonType') {
+      return SUMMON_ELEMENTS.map((element) => ({ type: 'SUMMON_TYPE' as const, element }))
+    }
+    if (pending.kind === 'enchantStone') {
+      return ['resilience', 'strength', 'efficiency'].map((defId) => ({
+        type: 'ENCHANT_STONE' as const,
+        defId,
+      }))
+    }
+    if (pending.kind === 'starbeamEnergy') {
+      const star = state.players[pending.owner].field[pending.slot]
+      if (!star) return []
+      return getCircleAdjacent(state, pending.owner, pending.slot).map((target) => ({
+        type: 'STARBEAM_ENERGY' as const,
+        target,
+      }))
+    }
     if (pending.kind === 'playCards') {
       const owner = state.players[pending.owner]
       const pile = pending.from === 'discard' ? 'discard' : 'hand'
       const plays = listPilePlayActions(state, owner, pile).filter((action) => {
-        if (pending.monstersOnly && action.type !== 'PLAY_MONSTER') return false
+        if (
+          pending.monstersOnly &&
+          action.type !== 'PLAY_MONSTER' &&
+          action.type !== 'REPLACE_MONSTER'
+        ) {
+          return false
+        }
         if (pending.effectsOnly && action.type !== 'PLAY_EFFECT') return false
         if (!pending.onlyInstanceId) return true
-        if (action.type !== 'PLAY_MONSTER' && action.type !== 'PLAY_EFFECT' && action.type !== 'PLAY_EQUIPMENT') {
+        if (
+          action.type !== 'PLAY_MONSTER' &&
+          action.type !== 'PLAY_EFFECT' &&
+          action.type !== 'PLAY_EQUIPMENT' &&
+          action.type !== 'REPLACE_MONSTER'
+        ) {
           return false
         }
         const cards = pile === 'discard' ? owner.discard : owner.hand
@@ -855,6 +911,15 @@ function collectLegalActions(state: GameState): GameAction[] {
           const card = player.hand[handIndex]
           const def = getCard(card.defId)
           if (def.kind !== 'monster') continue
+          const hostId = replacementBlobHost(def.id)
+          if (hostId) {
+            for (let slot = 0; slot < player.field.length; slot++) {
+              if (player.field[slot]?.defId === hostId) {
+                actions.push({ type: 'REPLACE_MONSTER', handIndex, slot })
+              }
+            }
+            continue
+          }
           for (const slot of emptySlots(player)) {
             for (const stance of playStances(def.id)) {
               actions.push({ type: 'PLAY_MONSTER', handIndex, slot, stance })
@@ -875,13 +940,19 @@ function collectLegalActions(state: GameState): GameAction[] {
           if (!canUseAbilityWhileWithdrawn(monster, ability)) continue
           if (
             ability.special !== 'chaosFireworks' &&
-            !canAfford(monster, lifestealRequire(monster, ability.cost.require), ability.cost.spend)
+            !canAfford(
+              monster,
+              adjustedCost(monster, ability.cost).require,
+              adjustedCost(monster, ability.cost).spend,
+            )
           ) {
             continue
           }
           if (ability.id === 'improvised_weapon' && monster.equipment.length === 0) continue
           const costsTeam = abilityCostsTeamAction(monster, ability)
           if (!acted && costsTeam && state.abilityUsesLeft <= 0 && !extraUse) continue
+          if (ability.special === 'fireball' && player.hand.length === 0) continue
+          if (ability.special === 'arcaneTome' && (monster.tome?.length ?? 0) === 0) continue
           if (ability.special === 'trickery' && state.players[player.id === 0 ? 1 : 0].hand.length === 0) continue
           if (ability.special === 'drawOne' && player.deck.length === 0) continue
           if (ability.special === 'drawTwo' && player.deck.length === 0) continue
@@ -1214,7 +1285,8 @@ function collectLegalActions(state: GameState): GameAction[] {
                 'zap', 'collect', 'supply',
                 'guardiansBlade', 'smash', 'ironTail', 'openFourthFloor', 'underground',
                 'greatAxe', 'dwarvenSpirit', 'dragonTalons',
-                'scent', 'burningSpear', 'greenHeal']
+                'scent', 'burningSpear', 'greenHeal',
+                'freezingGoop', 'bigRedSplat', 'bigBlueSplat', 'ancientPowers', 'enchantMonster']
                 .includes(ability.special ?? '')
             ) {
               let targets =

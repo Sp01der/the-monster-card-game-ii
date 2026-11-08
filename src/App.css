@@ -63,6 +63,47 @@ button.linkish {
   padding: 1.5rem;
 }
 
+.rules-corner {
+  position: fixed;
+  right: 0.85rem;
+  bottom: 0.85rem;
+  z-index: 60;
+  width: 2.6rem;
+  height: 2.6rem;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #232a38;
+  border: 1px solid #5b85ff;
+  color: #e8e6df;
+}
+
+.rules-corner svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.rules-backdrop {
+  z-index: 55;
+  padding-bottom: 4.5rem;
+}
+
+.rulebook h3 {
+  margin: 1rem 0 0.35rem;
+  font-size: 1rem;
+}
+
+.rulebook p,
+.rulebook li {
+  margin: 0.35rem 0;
+}
+
+.rulebook ul {
+  margin: 0.35rem 0 0.6rem;
+  padding-left: 1.2rem;
+}
+
 .app-hero h1 {
   margin: 0 0 0.25rem;
 }
@@ -967,6 +1008,15 @@ div.tcg-card:focus-visible {
   color: #d8c6eb;
   font-size: 0.61rem;
   line-height: 1.25;
+  text-align: left;
+}
+
+button.card-passive {
+  display: block;
+  width: 100%;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
 }
 
 .trickery-panel > .tcg-card {

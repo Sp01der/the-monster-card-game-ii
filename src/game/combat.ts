@@ -112,6 +112,7 @@ export function dealDamageToTarget(
   piercing = false,
   requiredEnergy = 0,
   doubleBeforeDefense = false,
+  damageTypes?: DamageType[],
 ): TargetRef | null {
   lastDealtDamage = 0
   if (!attacker && state.spellSourceInstanceId) {
@@ -162,6 +163,7 @@ export function dealDamageToTarget(
     const amount = computeDamage({
       base,
       damageType,
+      damageTypes,
       piercing,
       requiredEnergy,
       attacker,
@@ -191,7 +193,11 @@ export function dealDamageToTarget(
     if (!eq) return null
     const eqDef = getCard(eq.defId)
     if (eqDef.kind === 'equipment' && eqDef.indestructible) {
-      log(state, `${eqDef.name} cannot be destroyed.`)
+      log(state, `${eqDef.name} cannot be removed.`)
+      return target
+    }
+    if (eqDef.kind === 'equipment' && eqDef.attackProof) {
+      log(state, `${eqDef.name} is not harmed by the attack.`)
       return target
     }
     eq.hp -= base
@@ -212,6 +218,7 @@ export function dealDamageToTarget(
   const amount = computeDamage({
     base,
     damageType,
+    damageTypes,
     piercing,
     requiredEnergy,
     attacker,
@@ -237,7 +244,8 @@ export function dealDamageToTarget(
       log(state, `${def.name}'s Fortify fades.`)
     }
   }
-  if (amount > 0 && damageType === 'electric' && resolved.monster.defId === 'lightning_worm') {
+  const hitTypes = damageTypes?.length ? damageTypes : [damageType]
+  if (amount > 0 && hitTypes.includes('electric') && resolved.monster.defId === 'lightning_worm') {
     if (grantEnergy(state, resolved.monster, 1) > 0) {
       log(state, 'Lightning Worm gains 1 energy from the electric attack.')
     }
@@ -322,6 +330,8 @@ function resolveOneEffect(
         effect.damageType ?? 'untyped',
         effect.piercing,
         requiredEnergy,
+        false,
+        effect.damageTypes,
       )
     }
     case 'rollDamage': {

@@ -66,7 +66,7 @@ const TYPE_FILTERS: { id: CardSearchType; label: string; group: 'Damage' | 'Fami
   { id: 'poison', label: 'Poison', group: 'Damage' },
   { id: 'electric', label: 'Electric', group: 'Damage' },
   { id: 'light', label: 'Light', group: 'Damage' },
-  { id: 'sound', label: 'Sonic', group: 'Damage' },
+  { id: 'sonic', label: 'Sonic', group: 'Damage' },
   { id: 'blast', label: 'Blast', group: 'Damage' },
   { id: 'shadow', label: 'Shadow', group: 'Damage' },
   { id: 'wind', label: 'Wind', group: 'Damage' },

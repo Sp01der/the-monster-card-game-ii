@@ -24,16 +24,30 @@ describe('boostPrintedDamage', () => {
     expect(boostPrintedDamage('Roll 1–2 = 30, 3–4 = 40, 5–6 = 50.', 10)).toBe(
       'Roll 1–2 = 40, 3–4 = 50, 5–6 = 60.',
     )
-    expect(boostPrintedDamage('20 damage; 3/6 chance of 30 instead', 10)).toBe(
-      '30 damage; 3/6 chance of 40 instead',
+    expect(boostPrintedDamage('20 damage. 3/6 chance of 30 damage instead.', 10)).toBe(
+      '30 damage. 3/6 chance of 40 damage instead.',
+    )
+    expect(
+      boostPrintedDamage('20 electric; spend up to 3 extra energy for +20 each', 10),
+    ).toBe('30 electric; spend up to 3 extra energy for +20 each')
+    expect(boostPrintedDamage('Spend 1–3 energy: 30 damage per energy spent', 10)).toBe(
+      'Spend 1–3 energy: 30 damage per energy spent. +10 damage.',
     )
     expect(boostPrintedDamage('Heal another monster 30 HP.', 10)).toBe('Heal another monster 30 HP.')
-    expect(boostPrintedDamage('30 fire damage and Burn. On a 1–2, this card takes 20 damage.', 10)).toBe(
-      '40 fire damage and Burn. On a 1–2, this card takes 20 damage.',
-    )
+    expect(
+      boostPrintedDamage('30 fire damage and burn. 2/6 chance of this card taking 20 damage.', 10),
+    ).toBe('40 fire damage and burn. 2/6 chance of this card taking 20 damage.')
     expect(
       boostPrintedDamage('Every monster that has damaged one of your cards this game takes 20 damage.', 10),
     ).toBe('Every monster that has damaged one of your cards this game takes 30 damage.')
+    expect(
+      boostPrintedDamage(
+        "Lower this card's HP by 10 any number of times. Deal 20 damage per 10 HP lost.",
+        10,
+      ),
+    ).toBe(
+      "Lower this card's HP by 10 any number of times. Deal 20 damage per 10 HP lost. +10 damage.",
+    )
   })
 })
 
@@ -64,5 +78,21 @@ describe('withBladeCost live damage', () => {
     )
     // 20 base + 20 gold passive + 10 ATTACK! = 50
     expect(warden.find((line) => line.id === 'iron_fists')?.body).toBe('50 damage.')
+
+    const hunt = withBladeCost(
+      abilityLines(getCard('blubis_eel')),
+      mon({ defId: 'blubis_eel', attackBonus: 10 }),
+    )
+    expect(hunt.find((line) => line.id === 'hunt')?.body).toBe(
+      '20 damage; bury any number for +30 each',
+    )
+
+    const fires = withBladeCost(
+      abilityLines(getCard('veridis_warrior')),
+      mon({ defId: 'veridis_warrior', attackBonus: 10 }),
+    )
+    expect(fires.find((line) => line.id === 'veridian_fires')?.body).toBe(
+      "Lower this card's HP by 10 any number of times. Deal 20 damage per 10 HP lost. +10 damage.",
+    )
   })
 })

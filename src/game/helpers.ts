@@ -1,4 +1,4 @@
-import { getCard, getMonster, identityDefId } from './catalog'
+import { deathSpawnDefId, getCard, getMonster, identityDefId } from './catalog'
 import type {
   CardSnapshot,
   FieldMonster,
@@ -362,18 +362,63 @@ export function discardMonster(
         `${def.name} falls, and ${player.name}'s monsters gain 1 energy. ${player.name} may take an additional action next turn.`,
       )
     }
-    if (monster.defId === 'big_blob' && player.points > 0) {
+    const spawnId = deathSpawnDefId(monster.defId)
+    if (spawnId && player.points > 0) {
+      const job = { owner: player.id, remaining: 2, defId: spawnId }
       if (state.pending?.kind === 'spawnBlobs') {
-        if (state.pending.owner === player.id) state.pending.remaining += 2
-        else state.pending.queue.push({ owner: player.id, remaining: 2 })
+        if (state.pending.owner === player.id && state.pending.defId === spawnId) {
+          state.pending.remaining += 2
+        } else {
+          const queued = state.pending.queue.find(
+            (item) => item.owner === player.id && item.defId === spawnId,
+          )
+          if (queued) queued.remaining += 2
+          else state.pending.queue.push(job)
+        }
       } else {
-        state.pending = { kind: 'spawnBlobs', owner: player.id, remaining: 2, queue: [] }
+        state.pending = { kind: 'spawnBlobs', ...job, queue: [] }
       }
-      log(state, `${player.name} may place two Blobs from Big Blob's passive.`)
+      log(state, `${player.name} may place two ${getCard(spawnId).name}s.`)
     }
   } else {
     log(state, `${player.name}'s ${def.name} was removed.`)
   }
+}
+
+export function applyResilience(monster: FieldMonster): void {
+  monster.maxHp += 20
+  monster.hp = Math.min(monster.maxHp, monster.hp + 30)
+}
+
+export function removeResilience(monster: FieldMonster): void {
+  monster.maxHp -= 20
+  monster.hp = Math.min(monster.hp, monster.maxHp)
+}
+
+const RUNE_STONES = ['resilience', 'strength', 'efficiency'] as const
+
+/** Map a d6 onto the three runestones. 1–2 Resilience, 3–4 Strength, 5–6 Efficiency. */
+export function randomRunestone(state: GameState): (typeof RUNE_STONES)[number] {
+  const roll = rollDie(state)
+  return RUNE_STONES[Math.min(2, Math.floor((roll - 1) / 2))]!
+}
+
+export function attachCreatedEquipment(
+  state: GameState,
+  monster: FieldMonster,
+  defId: string,
+): void {
+  const def = getCard(defId)
+  if (def.kind !== 'equipment') return
+  const card = makeCard(state, defId)
+  monster.equipment.push({
+    instanceId: card.instanceId,
+    defId,
+    hp: def.maxHp,
+    maxHp: def.maxHp,
+  })
+  if (defId === 'resilience') applyResilience(monster)
+  log(state, `${def.name} is attached to ${getMonster(monster.defId).name}.`)
 }
 
 export function destroyEquipment(
@@ -388,12 +433,13 @@ export function destroyEquipment(
   if (!eq) return
   const def = getCard(eq.defId)
   if (def.kind === 'equipment' && def.indestructible) {
-    log(state, `${def.name} cannot be destroyed.`)
+    log(state, `${def.name} cannot be removed.`)
     return
   }
+  if (eq.defId === 'resilience') removeResilience(monster)
   monster.equipment.splice(equipmentIndex, 1)
   player.discard.push({ instanceId: eq.instanceId, defId: eq.defId })
-  log(state, `${def.name} on ${getMonster(monster.defId).name} was destroyed.`)
+  log(state, `${def.name} on ${getMonster(monster.defId).name} was removed.`)
 }
 
 export function checkLosses(state: GameState): void {
