@@ -64,6 +64,7 @@ function pendingDecisionPlayer(pending: PendingInteraction): PlayerId {
     case 'soundWave':
     case 'repeatGoo':
     case 'freezeTargets':
+    case 'chargedSplat':
       return pending.sourcePlayer
     case 'forceWithdraw':
     case 'handDiscard':

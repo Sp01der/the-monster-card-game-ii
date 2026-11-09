@@ -102,6 +102,7 @@ export function withoutProtected(state: GameState, targets: TargetRef[]): Target
 const NO_EQUIPMENT_SPECIALS = new Set([
   'bigSplat',
   'burningGoo',
+  'swarm',
   'cling',
   'imilithiasBrew',
   'collect',
@@ -122,7 +123,6 @@ const NO_EQUIPMENT_SPECIALS = new Set([
 const EQUIPMENT_STRIKE_SPECIALS = new Set([
   'waterClaw',
   'waterGush',
-  'swarm',
   'healOther',
   'charge',
   'discharge',

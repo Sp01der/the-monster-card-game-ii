@@ -194,7 +194,14 @@ export type FieldMonster = {
   pegasusUsedThisTurn?: boolean
   /** Effect card ids remembered by Tomebinder Wizard. Each id appears once. */
   tome?: string[]
+  /** Absorb: one card held under this card. It is not in play. */
+  held?: HeldCard
 }
+
+/** A card placed under another card by Absorb. */
+export type HeldCard =
+  | { kind: 'monster'; owner: PlayerId; fromSlot: number; monster: FieldMonster }
+  | { kind: 'equipment'; owner: PlayerId; hostInstanceId: string; equipment: FieldEquipment }
 
 export type FieldEquipment = {
   instanceId: string
@@ -539,6 +546,13 @@ type PendingShape =
   | { kind: 'enchantStone'; owner: PlayerId; target: TargetRef }
   | { kind: 'starbeamEnergy'; owner: PlayerId; slot: number }
   | {
+      kind: 'chargedSplat'
+      sourcePlayer: PlayerId
+      sourceSlot: number
+      step: 'goo' | 'energy'
+      again: boolean
+    }
+  | {
       kind: 'goldenDie'
       owner: PlayerId
       action: GameAction
@@ -766,6 +780,7 @@ export type GameAction =
   | { type: 'SUMMON_TYPE'; element: SummonElement }
   | { type: 'ENCHANT_STONE'; defId: string }
   | { type: 'STARBEAM_ENERGY'; target: TargetRef }
+  | { type: 'CHARGED_SPLAT'; target: TargetRef }
 
 export const FIELD_SIZE = 7
 export const STARTING_POINTS = 6

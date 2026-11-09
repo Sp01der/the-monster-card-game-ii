@@ -290,6 +290,10 @@ function describeAction(state: GameState, action: GameAction): string {
       return `Attach ${getCard(action.defId).name}`
     case 'STARBEAM_ENERGY':
       return 'Grant 1 energy'
+    case 'CHARGED_SPLAT':
+      return state.pending?.kind === 'chargedSplat' && state.pending.step === 'energy'
+        ? 'Give 1 energy to a blob'
+        : 'Charged Splat'
   }
 }
 
@@ -802,6 +806,13 @@ export function Board({
     for (const action of legal) {
       if (action.type === 'STARBEAM_ENERGY') highlightTargets.add(targetKey(action.target))
     }
+  } else if (state.pending?.kind === 'chargedSplat') {
+    prompt = state.pending.step === 'energy'
+      ? 'Give 1 energy to a blob.'
+      : 'Charged Splat again. Choose a target.'
+    for (const action of legal) {
+      if (action.type === 'CHARGED_SPLAT') highlightTargets.add(targetKey(action.target))
+    }
   } else if (state.pending?.kind === 'march') {
     prompt = 'Click your cards to withdraw or advance them, then finish.'
     for (const action of legal) {
@@ -957,6 +968,13 @@ export function Board({
     if (state.pending?.kind === 'starbeamEnergy') {
       const action = legal.find(
         (a) => a.type === 'STARBEAM_ENERGY' && actionsEqualTargets(a.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'chargedSplat') {
+      const action = legal.find(
+        (a) => a.type === 'CHARGED_SPLAT' && actionsEqualTargets(a.target, clicked),
       )
       if (action) dispatch(action)
       return

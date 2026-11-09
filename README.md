@@ -21,7 +21,7 @@ npm test
 
 ## Play
 
-1. Each player starts on a themed deck (Ember and Frost). Load Tide, Gloom, or Foundry, or search the catalog and click cards to build your own.
+1. Each player starts on a themed deck (Ember and Frost). Load Tide, Gloom, Foundry, or Through the Portal w. Wizrobes, or search the catalog and click cards to build your own.
 2. Save a deck to reuse it in this browser. Delete only removes a saved deck, not a starter.
 3. Choose the monster that starts on top of the deck.
 4. For hotseat: start the match, then pass the device at the handoff screen so hands stay hidden.

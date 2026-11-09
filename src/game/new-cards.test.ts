@@ -63,6 +63,73 @@ describe('new card catalog', () => {
 })
 
 describe('new combat rules', () => {
+  it('makes Purple Blob Swarm a free action that grants a Blob a free action', () => {
+    const swarm = getMonster('purple_blob').abilities.find((ability) => ability.id === 'swarm')
+    expect(swarm).toMatchObject({
+      cost: { require: 2, spend: 0 },
+      free: true,
+      special: 'swarm',
+    })
+
+    let state = main(game())
+    put(state.players[0], 0, 'purple_blob', { energy: 2 })
+    put(state.players[0], 1, 'blob', { energy: 2 })
+    put(state.players[0], 2, 'leecher')
+    put(state.players[1], 0, 'blob')
+
+    const swarms = listLegalActions(state).filter(
+      (candidate) => candidate.type === 'USE_ABILITY' && candidate.abilityId === 'swarm',
+    )
+    expect(swarms).toHaveLength(2)
+    expect(
+      swarms.every(
+        (candidate) =>
+          candidate.type === 'USE_ABILITY' &&
+          candidate.target?.kind === 'monster' &&
+          candidate.target.player === 0 &&
+          [0, 1].includes(candidate.target.slot),
+      ),
+    ).toBe(true)
+
+    state = applyAction(
+      state,
+      action(
+        state,
+        (candidate) =>
+          candidate.type === 'USE_ABILITY' &&
+          candidate.abilityId === 'swarm' &&
+          candidate.target?.kind === 'monster' &&
+          candidate.target.slot === 1,
+      ),
+    )
+    expect(state.players[0].field[0]?.energy).toBe(2)
+    expect(state.abilityUsesLeft).toBe(1)
+    expect(state.players[0].field[1]?.extraAbilityUses).toBe(1)
+
+    state = applyAction(
+      state,
+      action(
+        state,
+        (candidate) =>
+          candidate.type === 'USE_ABILITY' &&
+          candidate.slot === 1 &&
+          candidate.abilityId === 'wakkle',
+      ),
+    )
+    expect(state.players[1].field[0]?.hp).toBe(30)
+    expect(state.abilityUsesLeft).toBe(1)
+    expect(state.players[0].field[1]?.extraAbilityUses).toBe(0)
+    expect(state.actedSlots).not.toContain(1)
+    expect(
+      listLegalActions(state).some(
+        (candidate) =>
+          candidate.type === 'USE_ABILITY' &&
+          candidate.slot === 1 &&
+          candidate.abilityId === 'wakkle',
+      ),
+    ).toBe(true)
+  })
+
   it('marks Yellow Fairy Heal as ranged', () => {
     expect(getMonster('yellow_fairy').abilities.find((a) => a.id === 'heal')?.ranged).toBe(true)
   })

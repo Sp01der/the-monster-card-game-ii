@@ -38,6 +38,7 @@ import {
 import {
   abilityTargets,
   effectIsUntargeted,
+  normalAttackTargets,
   anyCardTargets,
   anyMonsterTargets,
   canUseAbilityWhileWithdrawn,
@@ -59,6 +60,30 @@ import type {
 
 function canChangeStance(monster: NonNullable<PlayerState['field'][number]>): boolean {
   return !isGooed(monster) && !isClinged(monster)
+}
+
+/** Own cards, plus opponent cards a normal attack could hit, including their equipment. */
+function absorbTargets(state: GameState, playerId: PlayerId, slot: number, maxHp: number): TargetRef[] {
+  const targets: TargetRef[] = []
+  const add = (target: TargetRef) => {
+    if (target.kind === 'monster' && target.player === playerId && target.slot === slot) return
+    const monster = state.players[target.player].field[target.slot]
+    if (!monster) return
+    const hp = target.kind === 'equipment' ? monster.equipment[target.equipmentIndex]?.hp : monster.hp
+    if (hp === undefined || hp > maxHp) return
+    targets.push(target)
+  }
+  const owner = state.players[playerId]
+  for (let index = 0; index < owner.field.length; index++) {
+    const monster = owner.field[index]
+    if (!monster) continue
+    add({ kind: 'monster', player: playerId, slot: index })
+    monster.equipment.forEach((_, equipmentIndex) => {
+      add({ kind: 'equipment', player: playerId, slot: index, equipmentIndex })
+    })
+  }
+  for (const target of withHostEquipment(state, normalAttackTargets(state, playerId))) add(target)
+  return targets
 }
 
 function pegasusMoves(state: GameState, player: PlayerState): GameAction[] {
@@ -778,6 +803,31 @@ function collectLegalActions(state: GameState): GameAction[] {
         defId,
       }))
     }
+    if (pending.kind === 'chargedSplat') {
+      if (pending.step === 'energy') {
+        const actions: GameAction[] = []
+        for (const player of state.players) {
+          for (let slot = 0; slot < player.field.length; slot++) {
+            const monster = player.field[slot]
+            if (!monster || !isBlobMonster(monster.defId) || !canReceiveEnergy(monster)) continue
+            actions.push({
+              type: 'CHARGED_SPLAT',
+              target: { kind: 'monster', player: player.id, slot },
+            })
+          }
+        }
+        return actions
+      }
+      const source = state.players[pending.sourcePlayer].field[pending.sourceSlot]
+      const ability = source
+        ? getMonster(source.defId).abilities.find((entry) => entry.special === 'chargedSplat')
+        : undefined
+      if (!source || !ability) return []
+      return abilityTargets(state, pending.sourcePlayer, source, ability).map((target) => ({
+        type: 'CHARGED_SPLAT' as const,
+        target,
+      }))
+    }
     if (pending.kind === 'starbeamEnergy') {
       const star = state.players[pending.owner].field[pending.slot]
       if (!star) return []
@@ -995,6 +1045,31 @@ function collectLegalActions(state: GameState): GameAction[] {
           }
           if (ability.special === 'knightsHonour') {
             actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id })
+            continue
+          }
+          if (ability.special === 'blobAbsorb') {
+            for (const target of absorbTargets(state, player.id, slot, monster.hp)) {
+              actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, target })
+            }
+            continue
+          }
+          if (ability.special === 'chargedSplat') {
+            for (const target of abilityTargets(state, player.id, monster, ability)) {
+              actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, target })
+            }
+            continue
+          }
+          if (ability.special === 'swarm') {
+            for (let allySlot = 0; allySlot < player.field.length; allySlot++) {
+              const ally = player.field[allySlot]
+              if (!ally || !isBlobMonster(ally.defId)) continue
+              actions.push({
+                type: 'USE_ABILITY',
+                slot,
+                abilityId: ability.id,
+                target: { kind: 'monster', player: player.id, slot: allySlot },
+              })
+            }
             continue
           }
           if (ability.special === 'chaosFireworks') {
@@ -1277,7 +1352,7 @@ function collectLegalActions(state: GameState): GameAction[] {
               }
             } else if (
               abilityNeedsTarget(ability, choice) ||
-              ['waterClaw', 'waterGush', 'bigSplat', 'burningGoo', 'swarm', 'cling',
+              ['waterClaw', 'waterGush', 'bigSplat', 'burningGoo', 'cling',
                 'healOther', 'charge', 'discharge', 'mudball', 'waterJet', 'hunt',
                 'iceyBeak', 'frostbite', 'frozenSting', 'lightningNeedle',
                 'flurryOfBlows', 'lavaClaw', 'magmaGush', 'solarFlare',

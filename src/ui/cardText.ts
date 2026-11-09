@@ -53,7 +53,7 @@ const ABILITY_TEXT: Record<string, string> = {
   big_splat: 'Goo a target. 1/6 chance of Goo on another target.',
   red_wakkle: '30 fire damage',
   burning_goo: 'Goo a target. If it is weak to fire, burn for 1 turn.',
-  swarm: '10 per Blob; 20 per Big Blob in your field',
+  swarm: 'Choose a Blob card you control to take a free action.',
   claw_rake: '20 damage. 3/6 chance of 30 damage instead.',
   cling: 'Immobilize a target. This card deals 10 damage to it at the end of your turn while this card has energy.',
   scratch: '20 damage',
@@ -227,6 +227,12 @@ const ABILITY_TEXT: Record<string, string> = {
   big_red_splat: 'Goo and burn a target. 1/6 chance of Goo and burn on another target.',
   big_blue_wakkle: '30 ice damage.',
   big_blue_splat: 'Goo and freeze a target. 1/6 chance of Goo and freeze on another target.',
+  black_wakkle: '20 shadow damage.',
+  blob_absorb:
+    "Choose a target with current HP less than or equal to this card's HP. Place it under this card. It is not in play, and it returns when this card dies or uses Absorb again.",
+  big_yellow_wakkle: '30 damage.',
+  charged_splat: 'Goo a target and give 1 energy to a blob. 1/6 chance to do it again.',
+  big_black_wakkle: '30 shadow damage.',
 }
 
 const EFFECT_TEXT: Record<string, string> = {

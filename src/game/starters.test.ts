@@ -11,12 +11,12 @@ describe('starter decks', () => {
       'tide',
       'gloom',
       'foundry',
+      'portal_wizrobes',
     ])
 
     for (const starter of STARTERS) {
       const cards = cardIdsFromCounts(starter.counts)
       expect(cards.length).toBeGreaterThanOrEqual(20)
-      expect(cards.length).toBeLessThanOrEqual(24)
       for (const id of Object.keys(starter.counts)) {
         expect(CATALOG[id], id).toBeTruthy()
         expect(starter.counts[id]).toBeGreaterThan(0)

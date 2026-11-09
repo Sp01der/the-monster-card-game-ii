@@ -1,9 +1,11 @@
-import { deathSpawnDefId, getCard, getMonster, identityDefId } from './catalog'
+import { deathSpawnDefId, getCard, getMonster, identityDefId, isBoneling } from './catalog'
 import type {
   CardSnapshot,
+  FieldEquipment,
   FieldMonster,
   GameState,
   HandCard,
+  HeldCard,
   PendingInteraction,
   PlayerId,
   PlayerState,
@@ -298,6 +300,134 @@ export function spendEnergy(monster: FieldMonster, spend: number): void {
   monster.energy -= spend
 }
 
+function findMonster(state: GameState, instanceId: string): { player: PlayerState; slot: number; monster: FieldMonster } | null {
+  for (const player of state.players) {
+    for (let slot = 0; slot < player.field.length; slot++) {
+      const monster = player.field[slot]
+      if (monster?.instanceId === instanceId) return { player, slot, monster }
+    }
+  }
+  return null
+}
+
+function discardStoredMonster(state: GameState, ownerId: PlayerId, monster: FieldMonster): void {
+  const owner = state.players[ownerId]
+  if (monster.held) {
+    const nested = monster.held
+    monster.held = undefined
+    releaseHeld(state, null, null, nested)
+  }
+  for (const equipment of monster.equipment) {
+    const card = { instanceId: equipment.instanceId, defId: equipment.defId }
+    const def = getCard(equipment.defId)
+    if (def.kind === 'equipment' && def.indestructible) owner.removed.push(card)
+    else owner.discard.push(card)
+  }
+  owner.discard.push({ instanceId: monster.instanceId, defId: monster.defId })
+  log(state, `${getMonster(monster.defId).name} was removed.`)
+}
+
+function placeReturningMonster(
+  state: GameState,
+  playerId: PlayerId,
+  slot: number,
+  monster: FieldMonster,
+): void {
+  monster.ownsExtraSlot = false
+  state.players[playerId].field[slot] = monster
+  log(
+    state,
+    `${getMonster(monster.defId).name} returns to ${state.players[playerId].name}'s field.`,
+  )
+  if (isBoneling(monster.defId) && monster.stance === 'withdrawn') {
+    monster.hp = 0
+    log(state, `${getMonster(monster.defId).name} cannot withdraw and dies instead.`)
+    discardMonster(state, state.players[playerId], slot, 'slain')
+  }
+}
+
+/** Put an Absorbed card back, or Remove it when it has nowhere to return. */
+export function releaseHeld(
+  state: GameState,
+  preferPlayer: PlayerId | null,
+  preferSlot: number | null,
+  held: HeldCard,
+): void {
+  if (held.kind === 'equipment') {
+    const host = findMonster(state, held.hostInstanceId)
+    if (!host) {
+      const owner = state.players[held.owner]
+      const card = { instanceId: held.equipment.instanceId, defId: held.equipment.defId }
+      const def = getCard(held.equipment.defId)
+      if (def.kind === 'equipment' && def.indestructible) owner.removed.push(card)
+      else owner.discard.push(card)
+      log(state, `${getCard(held.equipment.defId).name} was removed.`)
+      return
+    }
+    host.monster.equipment.push(held.equipment)
+    if (held.equipment.defId === 'resilience') applyResilience(host.monster)
+    log(state, `${getCard(held.equipment.defId).name} returns to ${getMonster(host.monster.defId).name}.`)
+    return
+  }
+
+  const preferOpen =
+    preferPlayer !== null &&
+    preferSlot !== null &&
+    preferSlot >= 0 &&
+    state.players[preferPlayer].field[preferSlot] == null
+  if (preferOpen) {
+    placeReturningMonster(state, preferPlayer, preferSlot, held.monster)
+    return
+  }
+  const owner = state.players[held.owner]
+  const slot = owner.field[held.fromSlot] == null ? held.fromSlot : emptySlots(owner)[0]
+  if (slot === undefined) {
+    discardStoredMonster(state, held.owner, held.monster)
+    return
+  }
+  placeReturningMonster(state, held.owner, slot, held.monster)
+}
+
+/** Take a monster off the field without discarding it or losing points. */
+export function liftMonster(state: GameState, player: PlayerState, slot: number): FieldMonster | null {
+  const monster = player.field[slot]
+  if (!monster) return null
+  if (monster.protectingInstanceId) releaseProtection(state, monster)
+  for (const owner of state.players) {
+    for (const other of owner.field) {
+      if (!other) continue
+      if (other.protectingInstanceId === monster.instanceId) other.protectingInstanceId = undefined
+      if (other.protectedByInstanceId === monster.instanceId) other.protectedByInstanceId = undefined
+    }
+  }
+  monster.protectingInstanceId = undefined
+  monster.protectedByInstanceId = undefined
+  monster.clingTargetInstanceId = undefined
+  for (const owner of state.players) {
+    for (const other of owner.field) {
+      if (!other) continue
+      other.statuses = other.statuses.filter(
+        (status) => status.kind !== 'cling' || status.sourceInstanceId !== monster.instanceId,
+      )
+    }
+  }
+  player.field[slot] = null
+  return monster
+}
+
+export function liftEquipment(
+  player: PlayerState,
+  slot: number,
+  equipmentIndex: number,
+): FieldEquipment | null {
+  const monster = player.field[slot]
+  const equipment = monster?.equipment[equipmentIndex]
+  if (!monster || !equipment) return null
+  if (equipment.defId === 'resilience') removeResilience(monster)
+  monster.equipment.splice(equipmentIndex, 1)
+  return equipment
+}
+
 export function discardMonster(
   state: GameState,
   player: PlayerState,
@@ -325,6 +455,8 @@ export function discardMonster(
   }
 
   player.discard.push({ instanceId: monster.instanceId, defId: monster.defId })
+  const held = monster.held
+  monster.held = undefined
   player.field[slot] = null
 
   // Any Cling maintained by or attached to this monster ends.
@@ -383,6 +515,7 @@ export function discardMonster(
   } else {
     log(state, `${player.name}'s ${def.name} was removed.`)
   }
+  if (held) releaseHeld(state, player.id, slot, held)
 }
 
 export function applyResilience(monster: FieldMonster): void {
@@ -505,6 +638,7 @@ function remapPending(pending: PendingInteraction, playerId: PlayerId, removed: 
     case 'soundWave':
     case 'freezeTargets':
     case 'stormType':
+    case 'chargedSplat':
       pending.sourceSlot = shiftSource(pending.sourcePlayer, pending.sourceSlot)
       break
     case 'forceWithdraw':

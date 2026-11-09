@@ -29,6 +29,8 @@ const REPLACEMENT_HOSTS: Record<string, string> = {
   big_blob: 'blob',
   big_red_blob: 'red_blob',
   big_blue_blob: 'blue_blob',
+  big_yellow_blob: 'yellow_blob',
+  big_black_blob: 'black_blob',
 }
 
 /** Small blob that must be replaced to play this card. */
@@ -41,6 +43,8 @@ export function deathSpawnDefId(defId: string): string | null {
   if (defId === 'big_blob') return 'blob'
   if (defId === 'big_red_blob') return 'red_blob'
   if (defId === 'big_blue_blob') return 'blue_blob'
+  if (defId === 'big_yellow_blob') return 'yellow_blob'
+  if (defId === 'big_black_blob') return 'black_blob'
   return null
 }
 
@@ -291,7 +295,7 @@ export const CATALOG: Record<string, CardDef> = {
     weakness: 'water', families: ['blob'],
     abilities: [
       { id: 'wakkle', name: 'Wakkle', cost: parseCost('+'), effects: [{ type: 'damage', amount: 20 }] },
-      { id: 'swarm', name: 'Swarm', cost: parseCost('00'), special: 'swarm', effects: [] },
+      { id: 'swarm', name: 'Swarm', cost: parseCost('00'), free: true, special: 'swarm', effects: [] },
     ],
   },
   rarkling: {
@@ -1344,6 +1348,36 @@ export const CATALOG: Record<string, CardDef> = {
       { id: 'big_blue_wakkle', name: 'Blue Wakkle', cost: parseCost('0+'),
         effects: [{ type: 'damage', amount: 30, damageType: 'ice' }] },
       { id: 'big_blue_splat', name: 'Splat', cost: parseCost('00'), special: 'bigBlueSplat', effects: [] },
+    ],
+  },
+  black_blob: {
+    kind: 'monster', id: 'black_blob', name: 'Black Blob', points: 2, maxHp: 80,
+    weakness: 'water', families: ['blob'],
+    abilities: [
+      { id: 'black_wakkle', name: 'Black Wakkle', cost: parseCost('+'),
+        effects: [{ type: 'damage', amount: 20, damageType: 'shadow' }] },
+      { id: 'blob_absorb', name: 'Absorb', cost: parseCost('0+'), special: 'blobAbsorb', effects: [] },
+    ],
+  },
+  big_yellow_blob: {
+    kind: 'monster', id: 'big_yellow_blob', name: 'Big Yellow Blob', points: 2, maxHp: 110,
+    weakness: 'water', families: ['blob'],
+    passiveText:
+      'If this card dies, create and place two Yellow Blobs. While this card is in play, gain 1 additional energy in the energy phase, which must be given to a blob card.',
+    abilities: [
+      { id: 'big_yellow_wakkle', name: 'Wakkle', cost: parseCost('0+'),
+        effects: [{ type: 'damage', amount: 30 }] },
+      { id: 'charged_splat', name: 'Charged Splat', cost: parseCost('00'), special: 'chargedSplat', effects: [] },
+    ],
+  },
+  big_black_blob: {
+    kind: 'monster', id: 'big_black_blob', name: 'Big Black Blob', points: 2, maxHp: 110,
+    weakness: 'water', families: ['blob'],
+    passiveText: 'If this card dies, create and place two Black Blobs.',
+    abilities: [
+      { id: 'big_black_wakkle', name: 'Black Wakkle', cost: parseCost('0+'),
+        effects: [{ type: 'damage', amount: 30, damageType: 'shadow' }] },
+      { id: 'blob_absorb', name: 'Absorb', cost: parseCost('0+'), special: 'blobAbsorb', effects: [] },
     ],
   },
 }

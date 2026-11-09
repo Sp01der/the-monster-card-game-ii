@@ -178,6 +178,14 @@ export function CardFace({
             </div>
           )
         )}
+        {field?.held && (
+          <div className="card-equipment">
+            Under:{' '}
+            {getCard(field.held.kind === 'monster' ? field.held.monster.defId : field.held.equipment.defId).name}
+            {' ♥ '}
+            {field.held.kind === 'monster' ? field.held.monster.hp : field.held.equipment.hp}
+          </div>
+        )}
         {field && field.equipment.length > 0 && (
           <div className="card-equipment">
             {field.equipment.map((eq, eqIndex) => {

@@ -8,7 +8,6 @@ import {
   countWoodySpears,
   countsAsElementalCard,
   cardMatchesSearchType,
-  deathSpawnDefId,
   ELEMENTAL_TYPES,
   getCard,
   getMonster,
@@ -57,11 +56,14 @@ import {
   discardMonster,
   grantEnergy,
   hasKeystone,
+  liftEquipment,
+  liftMonster,
   clearNegativeStatuses,
   isClinged,
   isGooed,
   log,
   makeCard,
+  releaseHeld,
   releaseProtection,
   restoreSnapshot,
   otherPlayer,
@@ -283,7 +285,11 @@ function beginEnergyPhase(state: GameState): void {
   const sparkSucceeded = player.field.some((m) => m?.sparkedThisTurn)
   const fairies = player.field.filter((m) => m && identityDefId(m) === 'yellow_fairy').length
   state.energyPool = (sparkSucceeded ? 3 : 1) + fairies
-  state.blobEnergyPool = player.field.filter((m) => m && identityDefId(m) === 'yellow_blob').length
+  state.blobEnergyPool = player.field.filter(
+    (monster) =>
+      monster &&
+      (identityDefId(monster) === 'yellow_blob' || identityDefId(monster) === 'big_yellow_blob'),
+  ).length
   state.bannerEnergyPool = player.field.filter((m) => m && identityDefId(m) === 'unending_bannerman').length
   for (let slot = 0; slot < player.field.length; slot++) {
     const monster = player.field[slot]
@@ -522,6 +528,96 @@ function dealsIceDamage(defId: string): boolean {
   )
 }
 
+function targetCurrentHp(state: GameState, target: TargetRef): number | null {
+  const monster = state.players[target.player].field[target.slot]
+  if (!monster) return null
+  if (target.kind === 'equipment') return monster.equipment[target.equipmentIndex]?.hp ?? null
+  return monster.hp
+}
+
+function absorbTarget(
+  state: GameState,
+  player: PlayerState,
+  slot: number,
+  target: TargetRef | undefined,
+): void {
+  const absorber = player.field[slot]
+  if (!absorber || !target) return
+  if (absorber.held) {
+    const previous = absorber.held
+    absorber.held = undefined
+    releaseHeld(state, null, null, previous)
+  }
+  const live = player.field[slot]
+  if (!live) return
+  const hp = targetCurrentHp(state, target)
+  if (hp === null || hp > live.hp) {
+    log(state, 'Absorb has no legal target.')
+    return
+  }
+  if (target.kind === 'monster' && target.player === player.id && target.slot === slot) return
+  if (target.kind === 'monster') {
+    const lifted = liftMonster(state, state.players[target.player], target.slot)
+    if (!lifted) return
+    live.held = { kind: 'monster', owner: target.player, fromSlot: target.slot, monster: lifted }
+    log(state, `${getMonster(lifted.defId).name} is placed under ${getMonster(live.defId).name}.`)
+  } else {
+    const host = state.players[target.player].field[target.slot]
+    const hostId = host?.instanceId
+    const lifted = liftEquipment(state.players[target.player], target.slot, target.equipmentIndex)
+    if (!lifted || !hostId) return
+    live.held = {
+      kind: 'equipment',
+      owner: target.player,
+      hostInstanceId: hostId,
+      equipment: lifted,
+    }
+    log(state, `${getCard(lifted.defId).name} is placed under ${getMonster(live.defId).name}.`)
+  }
+  checkLosses(state)
+}
+
+function gooChargedTarget(state: GameState, target: TargetRef): void {
+  const monster = targetMonster(state, target)
+  if (!monster || target.kind !== 'monster') return
+  applyStatus(monster, 'goo', 1, 1, undefined, target.player === state.activePlayer)
+}
+
+function chargedBlobTargets(state: GameState): TargetRef[] {
+  const targets: TargetRef[] = []
+  for (const player of state.players) {
+    for (let slot = 0; slot < player.field.length; slot++) {
+      const monster = player.field[slot]
+      if (monster && isBlobMonster(monster.defId) && canReceiveEnergy(monster)) {
+        targets.push({ kind: 'monster', player: player.id, slot })
+      }
+    }
+  }
+  return targets
+}
+
+function offerChargedEnergy(
+  state: GameState,
+  sourcePlayer: PlayerId,
+  sourceSlot: number,
+  again: boolean,
+): void {
+  const blobs = chargedBlobTargets(state)
+  if (blobs.length === 1) {
+    const only = blobs[0]
+    const monster = only ? state.players[only.player].field[only.slot] : null
+    if (monster && grantEnergy(state, monster, 1) > 0) {
+      log(state, `${getMonster(monster.defId).name} gains 1 energy.`)
+    }
+  } else if (blobs.length > 1) {
+    state.pending = { kind: 'chargedSplat', sourcePlayer, sourceSlot, step: 'energy', again }
+    return
+  }
+  if (again) {
+    state.pending = { kind: 'chargedSplat', sourcePlayer, sourceSlot, step: 'goo', again: false }
+  }
+}
+
 function applySplat(
   state: GameState,
   player: PlayerState,
@@ -619,14 +715,10 @@ function resolveSpecialAbility(
       break
     }
     case 'swarm': {
-      let amount = 0
-      for (const m of player.field) {
-        if (!m || !getMonster(m.defId).name.toLowerCase().includes('blob')) continue
-        amount += deathSpawnDefId(m.defId) ? 20 : 10
-      }
-      if (target) {
-        dealDamageToTarget(state, attacker, target, amount, 'untyped', false, requiredEnergy)
-      }
+      const ally = target?.kind === 'monster' ? state.players[target.player].field[target.slot] : null
+      if (!ally || target?.player !== player.id || !isBlobMonster(ally.defId)) break
+      ally.extraAbilityUses = (ally.extraAbilityUses ?? 0) + 1
+      log(state, `${getMonster(ally.defId).name} may take a free action.`)
       break
     }
     case 'cling': {
@@ -1767,6 +1859,16 @@ function resolveSpecialAbility(
         state.pending = { kind: 'enchantStone', owner: player.id, target }
       }
       break
+    case 'blobAbsorb':
+      absorbTarget(state, player, slot, target)
+      break
+    case 'chargedSplat':
+      if (target) {
+        const again = lensSuccessFaces(attacker, highFaces(1)).includes(rollDie(state))
+        gooChargedTarget(state, target)
+        offerChargedEnergy(state, player.id, slot, again)
+      }
+      break
     case 'ancientPowers': {
       if (target) {
         dealDamageToTarget(
@@ -2395,6 +2497,7 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       const def = getMonster(monster.defId)
       const ability = monsterAbilities(monster).find((a) => a.id === action.abilityId)
       if (!ability) throw new Error('No ability')
+      const extraLeftBefore = monster.extraAbilityUses ?? 0
 
       if (abilityNeedsChoice(ability) && !action.choice) {
         throw new Error('Choice required')
@@ -2460,14 +2563,13 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       }
 
       const alreadyActed = next.actedSlots.includes(action.slot)
-      const extraLeft = monster.extraAbilityUses ?? 0
       const costsTeam = abilityCostsTeamAction(monster, ability)
       const useNormal = !alreadyActed && (!costsTeam || next.abilityUsesLeft > 0)
-      if (useNormal) {
+      if (extraLeftBefore > 0) {
+        monster.extraAbilityUses = Math.max(0, (monster.extraAbilityUses ?? 0) - 1)
+      } else if (useNormal) {
         next.actedSlots.push(action.slot)
         if (costsTeam) next.abilityUsesLeft = Math.max(0, next.abilityUsesLeft - 1)
-      } else if (extraLeft > 0) {
-        monster.extraAbilityUses = extraLeft - 1
       } else if (!alreadyActed) {
         next.actedSlots.push(action.slot)
       }
@@ -3647,6 +3749,35 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       const monster = targetMonster(next, pending.target)
       if (monster) attachCreatedEquipment(next, monster, action.defId)
       clearPending(next)
+      break
+    }
+    case 'CHARGED_SPLAT': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'chargedSplat') break
+      const source = next.players[pending.sourcePlayer].field[pending.sourceSlot]
+      if (!source) {
+        clearPending(next)
+        break
+      }
+      if (pending.step === 'energy') {
+        const monster = targetMonster(next, action.target)
+        if (monster && isBlobMonster(monster.defId) && grantEnergy(next, monster, 1) > 0) {
+          log(next, `${getMonster(monster.defId).name} gains 1 energy.`)
+        }
+        if (pending.again) {
+          next.pending = {
+            kind: 'chargedSplat',
+            sourcePlayer: pending.sourcePlayer,
+            sourceSlot: pending.sourceSlot,
+            step: 'goo',
+            again: false,
+          }
+        } else clearPending(next)
+      } else {
+        gooChargedTarget(next, action.target)
+        offerChargedEnergy(next, pending.sourcePlayer, pending.sourceSlot, false)
+        if (next.pending === pending) clearPending(next)
+      }
       break
     }
     case 'STARBEAM_ENERGY': {
