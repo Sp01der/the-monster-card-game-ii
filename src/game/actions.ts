@@ -32,14 +32,16 @@ import {
   isClinged,
   isFrozen,
   isGooed,
+  isStone,
   monsterAt,
   targetInstanceId,
 } from './helpers'
 import {
   abilityTargets,
+  anyCardTargets,
   effectIsUntargeted,
   normalAttackTargets,
-  anyCardTargets,
+  rangedAttackTargets,
   anyMonsterTargets,
   canUseAbilityWhileWithdrawn,
   effectTargetOptions,
@@ -227,7 +229,18 @@ function listPilePlayActions(
           })
         }
       }
+    } else if (def.kind === 'structure') {
+      for (let slot = 0; slot < player.field.length; slot++) {
+        if (!player.field[slot]) continue
+        actions.push({
+          type: 'PLAY_STRUCTURE',
+          handIndex,
+          slot,
+          ...(fromDiscard ? { fromDiscard: true } : {}),
+        })
+      }
     } else if (def.kind === 'effect') {
+      if (player.blockEffects) continue
       if (def.effectId === 'hauntedMists' && player.discard.length === 0) continue
       if (noTargetEffect(def.effectId)) {
         actions.push({
@@ -803,6 +816,68 @@ function collectLegalActions(state: GameState): GameAction[] {
         defId,
       }))
     }
+    if (pending.kind === 'etherealReturn') {
+      const current = pending.queue[0]
+      if (!current) return []
+      const owner = state.players[current.controller]
+      const actions: GameAction[] = []
+      for (const slot of emptySlots(owner)) {
+        actions.push({ type: 'ETHEREAL_PLACE', slot, stance: 'active' })
+        actions.push({ type: 'ETHEREAL_PLACE', slot, stance: 'withdrawn' })
+      }
+      return actions
+    }
+    if (pending.kind === 'tax') {
+      const giver = state.players[pending.owner]
+      const actions: GameAction[] = giver.hand.map((card) => ({
+        type: 'TAX_GIVE' as const,
+        instanceId: card.instanceId,
+      }))
+      for (let slot = 0; slot < giver.field.length; slot++) {
+        const monster = giver.field[slot]
+        if (!monster) continue
+        actions.push({ type: 'TAX_DAMAGE', target: { kind: 'monster', player: giver.id, slot } })
+        monster.equipment.forEach((_, equipmentIndex) => {
+          actions.push({
+            type: 'TAX_DAMAGE',
+            target: { kind: 'equipment', player: giver.id, slot, equipmentIndex },
+          })
+        })
+      }
+      return actions
+    }
+    if (pending.kind === 'stoneCure') {
+      const owner = state.players[pending.owner]
+      const actions: GameAction[] = [{ type: 'STONE_KEEP' }]
+      for (const monster of owner.field) {
+        if (!monster?.statuses.some((status) => status.kind === 'stone' && status.cure === 'skipEnergy')) continue
+        actions.push({ type: 'STONE_CURE', instanceId: monster.instanceId })
+      }
+      return actions
+    }
+    if (pending.kind === 'arrowVolley') {
+      return [
+        { type: 'ARROW_SKIP' as const },
+        ...anyCardTargets(state).map((target) => ({ type: 'ARROW_SHOT' as const, target })),
+      ]
+    }
+    if (pending.kind === 'wisdomEnergy') {
+      const sage = state.players[pending.owner].field[pending.slot]
+      const targets: TargetRef[] = []
+      for (let slot = 0; slot < state.players[pending.owner].field.length; slot++) {
+        const monster = state.players[pending.owner].field[slot]
+        if (monster && canReceiveEnergy(monster)) {
+          targets.push({ kind: 'monster', player: pending.owner, slot })
+        }
+      }
+      if (sage) {
+        for (const target of rangedAttackTargets(state, pending.owner, sage)) {
+          const monster = state.players[target.player].field[target.slot]
+          if (monster && canReceiveEnergy(monster)) targets.push(target)
+        }
+      }
+      return targets.map((target) => ({ type: 'WISDOM_ENERGY' as const, target }))
+    }
     if (pending.kind === 'chargedSplat') {
       if (pending.step === 'energy') {
         const actions: GameAction[] = []
@@ -930,6 +1005,13 @@ function collectLegalActions(state: GameState): GameAction[] {
   const actions: GameAction[] = []
 
   for (const entry of player.ethereal ?? []) {
+    const manual = entry.attachedMonster ?? (entry.monster && entry.returnPlayer === undefined ? entry.monster : null)
+    if (manual) {
+      for (const slot of emptySlots(player)) {
+        actions.push({ type: 'RETURN_ETHEREAL', instanceId: manual.instanceId, slot, stance: 'active' })
+        actions.push({ type: 'RETURN_ETHEREAL', instanceId: manual.instanceId, slot, stance: 'withdrawn' })
+      }
+    }
     if (entry.card.defId !== 'rewind' || !entry.snapshot) continue
     if (player.hand.length > 0) {
       actions.push({ type: 'REWIND_USE', rewindInstanceId: entry.card.instanceId })
@@ -982,7 +1064,7 @@ function collectLegalActions(state: GameState): GameAction[] {
 
       for (let slot = 0; slot < player.field.length; slot++) {
         const monster = monsterAt(player, slot)
-        if (!monster || isFrozen(monster) || isGooed(monster)) continue
+        if (!monster || isFrozen(monster) || isGooed(monster) || isStone(monster) || monster.abilitiesSealed) continue
         const acted = state.actedSlots.includes(slot)
         const extraUse = (monster.extraAbilityUses ?? 0) > 0
         if (acted && !extraUse) continue
@@ -1319,6 +1401,81 @@ function collectLegalActions(state: GameState): GameAction[] {
           if (ability.special === 'raid') {
             for (const target of withoutProtected(state, abilityTargets(state, player.id, monster, ability))) {
               actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, target })
+            }
+            continue
+          }
+          if (
+            identityDefId(monster) === 'sandstorm_golem' &&
+            !monster.abilitiesUnlocked &&
+            ability.id !== 'storm_coming'
+          ) {
+            continue
+          }
+          if (
+            ability.special === 'silence' ||
+            ability.special === 'unrelentingArrows' ||
+            ability.special === 'stormComing' ||
+            ability.special === 'sandstorm' ||
+            ability.special === 'tax' ||
+            ability.special === 'wisdomWinds'
+          ) {
+            actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id })
+            continue
+          }
+          if (ability.special === 'stalk' || ability.special === 'dancingWind' || ability.special === 'buriedAlive') {
+            for (const target of abilityTargets(state, player.id, monster, ability)) {
+              actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, target })
+            }
+            continue
+          }
+          if (ability.special === 'soar') {
+            for (const side of state.players) {
+              for (let index = 0; index < side.field.length; index++) {
+                const candidate = side.field[index]
+                if (!candidate || candidate.instanceId === monster.instanceId) continue
+                actions.push({
+                  type: 'USE_ABILITY',
+                  slot,
+                  abilityId: ability.id,
+                  target: { kind: 'monster', player: side.id, slot: index },
+                })
+              }
+            }
+            continue
+          }
+          if (ability.special === 'bodyGuard') {
+            for (let index = 0; index < player.field.length; index++) {
+              if (!player.field[index] || index === slot) continue
+              actions.push({
+                type: 'USE_ABILITY',
+                slot,
+                abilityId: ability.id,
+                target: { kind: 'monster', player: player.id, slot: index },
+              })
+            }
+            continue
+          }
+          if (ability.special === 'renderAid') {
+            const allies: TargetRef[] = []
+            const enemies: TargetRef[] = []
+            for (const side of state.players) {
+              for (let index = 0; index < side.field.length; index++) {
+                if (!side.field[index]) continue
+                const ref: TargetRef = { kind: 'monster', player: side.id, slot: index }
+                if (side.id === player.id) allies.push(ref)
+                else enemies.push(ref)
+              }
+            }
+            if (enemies.length === 0) {
+              for (const ally of allies) {
+                actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, targets: [ally] })
+              }
+            } else {
+              for (const ally of allies) {
+                for (const enemy of enemies) {
+                  actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, targets: [ally, enemy] })
+                }
+              }
             }
             continue
           }

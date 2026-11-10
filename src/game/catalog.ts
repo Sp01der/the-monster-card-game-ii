@@ -1380,6 +1380,104 @@ export const CATALOG: Record<string, CardDef> = {
       { id: 'blob_absorb', name: 'Absorb', cost: parseCost('0+'), special: 'blobAbsorb', effects: [] },
     ],
   },
+  silent_walker: {
+    kind: 'monster', id: 'silent_walker', name: 'Silent Walker', points: 2, maxHp: 100,
+    weakness: 'sonic',
+    abilities: [
+      { id: 'stalk', name: 'Stalk', cost: parseCost('+'), special: 'stalk', effects: [] },
+      { id: 'silence', name: 'Silence', cost: parseCost('00'), special: 'silence', effects: [] },
+    ],
+  },
+  unending_archer: {
+    kind: 'monster', id: 'unending_archer', name: 'Unending Archer', points: 2, maxHp: 80,
+    weakness: 'earth',
+    abilities: [
+      { id: 'archer_spear', name: 'Spear', cost: parseCost('0'),
+        effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: highFaces(3) }] },
+      { id: 'volley', name: 'Volley', cost: parseCost('0+'), ranged: true,
+        effects: [{ type: 'damage', amount: 20 }] },
+      { id: 'unrelenting_arrows', name: 'Unrelenting Arrows', cost: parseCost('+++'),
+        special: 'unrelentingArrows', effects: [] },
+    ],
+  },
+  keltreson_noble: {
+    kind: 'monster', id: 'keltreson_noble', name: 'Keltreson Noble', points: 2, maxHp: 90,
+    weakness: 'poison', goldAffinity: true,
+    abilities: [
+      { id: 'heirloom_sword', name: 'Heirloom Sword', cost: parseCost('++'),
+        effects: [{ type: 'damage', amount: 40 }] },
+      { id: 'body_guard', name: 'Body Guard', cost: parseCost('00'), special: 'bodyGuard', effects: [] },
+      { id: 'tax', name: 'Tax', cost: parseCost('00+'), special: 'tax', effects: [] },
+    ],
+  },
+  northsel_great_hawk: {
+    kind: 'monster', id: 'northsel_great_hawk', name: 'Northsel Great Hawk', points: 2, maxHp: 100,
+    weakness: 'earth',
+    abilities: [
+      { id: 'great_wing', name: 'Great Wing', cost: parseCost('0'),
+        effects: [{ type: 'damage', amount: 20, damageType: 'wind' }] },
+      { id: 'soar', name: 'Soar', cost: parseCost('++'), special: 'soar', effects: [] },
+    ],
+  },
+  air_sprite: {
+    kind: 'monster', id: 'air_sprite', name: 'Air Sprite', points: 2, maxHp: 90,
+    weakness: 'earth',
+    abilities: [
+      { id: 'wind_punch', name: 'Wind Punch', cost: parseCost('0'),
+        effects: [{ type: 'damage', amount: 30, damageType: 'wind' }] },
+      { id: 'dancing_on_the_wind', name: 'Dancing on the Wind', cost: parseCost('00'),
+        special: 'dancingWind', effects: [] },
+    ],
+  },
+  construct_warrior: {
+    kind: 'monster', id: 'construct_warrior', name: 'Construct Warrior', points: 2, maxHp: 100,
+    weakness: 'water', defense: 1, idleEnergy: true,
+    passiveText: 'Energy phase: if unused this turn, gain 1 energy.',
+    abilities: [
+      { id: 'electro_blades', name: 'Electro Blades', cost: parseCost('000'), repeats: 2,
+        effects: [{ type: 'damage', amount: 20, damageType: 'electric', piercing: true }] },
+      { id: 'guard_protocol', name: 'Guard Protocol', cost: parseCost('00'), special: 'guard', effects: [] },
+    ],
+  },
+  larrathere_knight: {
+    kind: 'monster', id: 'larrathere_knight', name: 'Larrathere Knight', points: 3, maxHp: 120,
+    weakness: 'shadow', defense: 1,
+    passiveText: 'This card deals 10 extra wind damage for every 10 HP that was healed on your last turn.',
+    abilities: [
+      { id: 'way_of_the_wind', name: 'The Way of the Wind', cost: parseCost('+'), free: true,
+        effects: [{ type: 'damage', amount: 0, damageType: 'wind' }] },
+      { id: 'render_aid', name: 'Render Aid', cost: parseCost('0'), special: 'renderAid', effects: [] },
+    ],
+  },
+  shrine_of_healing: {
+    kind: 'structure', id: 'shrine_of_healing', name: 'Shrine of Healing',
+    structureId: 'shrineOfHealing', ethereal: true,
+  },
+  targeted_hurricane: {
+    kind: 'effect', id: 'targeted_hurricane', name: 'Targeted Hurricane', effectId: 'targetedHurricane',
+  },
+  zephyr_sage: {
+    kind: 'monster', id: 'zephyr_sage', name: 'Zephyr Sage', points: 1, maxHp: 70,
+    weakness: 'earth',
+    abilities: [
+      { id: 'wisdom_of_the_winds', name: 'Wisdom of the Winds', cost: parseCost('0'),
+        ranged: true, special: 'wisdomWinds', effects: [] },
+      { id: 'gust', name: 'Gust', cost: parseCost('+'),
+        effects: [{ type: 'damage', amount: 10, damageType: 'wind' }] },
+    ],
+  },
+  sandstorm_golem: {
+    kind: 'monster', id: 'sandstorm_golem', name: 'Sandstorm Golem', points: 4, maxHp: 200,
+    weakness: 'water',
+    passiveText: 'This card enters with only Storm Coming unlocked.',
+    abilities: [
+      { id: 'storm_coming', name: 'Storm Coming', cost: parseCost('000'), special: 'stormComing', effects: [] },
+      { id: 'dust_devil', name: 'Dust Devil', cost: parseCost('0+'),
+        effects: [{ type: 'damage', amount: 40, damageTypes: ['wind', 'earth'] }] },
+      { id: 'sandstorm', name: 'Sandstorm', cost: parseCost('+++'), special: 'sandstorm', effects: [] },
+      { id: 'buried_alive', name: 'Buried Alive', cost: parseCost('0+'), special: 'buriedAlive', effects: [] },
+    ],
+  },
 }
 
 export const SPEAR_ABILITY: AbilityDef = {
@@ -1710,6 +1808,9 @@ const SPECIAL_DAMAGE_TYPES: Record<string, Exclude<DamageType, 'untyped'>[]> = {
   chaosFireworks: ['blast'],
   fireball: ['blast'],
   ancientPowers: [...ELEMENTAL_TYPES],
+  stalk: ['shadow'],
+  dancingWind: ['wind'],
+  sandstorm: ['earth', 'wind'],
 }
 
 const EFFECT_DAMAGE_TYPES: Record<string, Exclude<DamageType, 'untyped'>[]> = {

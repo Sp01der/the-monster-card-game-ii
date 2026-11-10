@@ -47,8 +47,10 @@ import {
   applyStatus,
   attachCreatedEquipment,
   activePlayer,
+  becomeEthereal,
   beginProtection,
   canReceiveEnergy,
+  countEtherealCards,
   captureCardSnapshot,
   checkLosses,
   cloneState,
@@ -65,9 +67,13 @@ import {
   makeCard,
   releaseHeld,
   releaseProtection,
+  removeResilience,
   restoreSnapshot,
   otherPlayer,
+  placeMonsterOnField,
   randomRunestone,
+  recordHeal,
+  removeMonsterWithoutPoints,
   resolveTarget,
   rollDie,
   spendEnergy,
@@ -80,16 +86,17 @@ import {
   effectTargetOptions,
   withoutProtected,
 } from './targeting'
-import type {
-  CardSnapshot,
-  DamageType,
-  FieldMonster,
-  GameAction,
-  GameState,
-  HandCard,
-  PlayerId,
-  PlayerState,
-  TargetRef,
+import {
+  HAND_SIZE_LIMIT,
+  type CardSnapshot,
+  type DamageType,
+  type FieldMonster,
+  type GameAction,
+  type GameState,
+  type HandCard,
+  type PlayerId,
+  type PlayerState,
+  type TargetRef,
 } from './types'
 
 function assertLegal(state: GameState, action: GameAction): void {
@@ -261,30 +268,40 @@ function beginMainPhase(state: GameState): void {
   }
 }
 
+/** Leave the energy phase; force a discard if the hand is over the limit. */
+function finishEnergyPhase(state: GameState): void {
+  state.phase = 'end'
+  state.energyPool = 0
+  state.blobEnergyPool = 0
+  state.bannerEnergyPool = 0
+  const player = activePlayer(state)
+  const excess = player.hand.length - HAND_SIZE_LIMIT
+  if (excess > 0) {
+    beginForcedDiscard(state, player.id, excess)
+    log(state, `${player.name} must discard down to ${HAND_SIZE_LIMIT}.`)
+  }
+}
+
 function beginEnergyPhase(state: GameState): void {
   const player = activePlayer(state)
   if (player.skipEnergyPhases > 0) {
     player.skipEnergyPhases -= 1
-    state.phase = 'end'
-    state.energyPool = 0
-    state.blobEnergyPool = 0
-    state.bannerEnergyPool = 0
+    player.bonusEnergy = 0
     state.skipEnergyPhase = false
     log(state, `${player.name}'s energy phase is skipped.`)
+    finishEnergyPhase(state)
     return
   }
   if (state.skipEnergyPhase) {
-    state.phase = 'end'
-    state.energyPool = 0
-    state.blobEnergyPool = 0
-    state.bannerEnergyPool = 0
     log(state, `${player.name}'s energy phase is skipped.`)
+    finishEnergyPhase(state)
     return
   }
   state.phase = 'energy'
   const sparkSucceeded = player.field.some((m) => m?.sparkedThisTurn)
   const fairies = player.field.filter((m) => m && identityDefId(m) === 'yellow_fairy').length
-  state.energyPool = (sparkSucceeded ? 3 : 1) + fairies
+  state.energyPool = (sparkSucceeded ? 3 : 1) + fairies + (player.bonusEnergy ?? 0)
+  player.bonusEnergy = 0
   state.blobEnergyPool = player.field.filter(
     (monster) =>
       monster &&
@@ -310,6 +327,10 @@ function beginEnergyPhase(state: GameState): void {
       log(state, `${getMonster(monster.defId).name} gains 1 energy for remaining unused.`)
     }
   }
+  if (player.field.some((monster) => monster && monster.statuses.some((status) => status.kind === 'stone' && status.cure === 'skipEnergy'))) {
+    state.pending = { kind: 'stoneCure', owner: player.id }
+    log(state, 'You may skip this energy phase to remove Stone from a monster.')
+  }
 }
 
 function purgeStatusImmunity(state: GameState): void {
@@ -330,6 +351,7 @@ function resolveEndStep(state: GameState): void {
     if (rings === 0) continue
     const heal = 10 * rings
     const nextHp = Math.min(monster.maxHp, monster.hp + heal)
+    recordHeal(state, nextHp - monster.hp)
     if (nextHp !== monster.hp) {
       monster.hp = nextHp
       log(state, `${getMonster(monster.defId).name} heals ${heal} from Emerald Ring (now ${monster.hp} HP).`)
@@ -373,6 +395,8 @@ function resolveEndStep(state: GameState): void {
     return
   }
   tickStatuses(state)
+  healShrines(state)
+  queueArrowShots(state)
 }
 
 function tickStatuses(state: GameState): void {
@@ -388,7 +412,7 @@ function tickStatuses(state: GameState): void {
     const nextStatuses = []
     let slainBy: PlayerId | undefined
     for (const status of [...monster.statuses]) {
-      if (status.kind === 'goo' || status.kind === 'cling') {
+      if (status.kind === 'goo' || status.kind === 'cling' || status.kind === 'stone') {
         nextStatuses.push(status)
         continue
       }
@@ -455,10 +479,94 @@ function expireHauntedMists(state: GameState, player: PlayerState): void {
   player.ethereal = kept.length > 0 ? kept : undefined
 }
 
+function expireStalks(state: GameState, playerId: PlayerId): void {
+  for (const player of state.players) {
+    for (const monster of player.field) {
+      if (!monster?.stalkedBy) continue
+      monster.stalkedBy = monster.stalkedBy.filter((source) => source !== playerId)
+      if (monster.stalkedBy.length === 0) monster.stalkedBy = undefined
+    }
+  }
+}
+
+function healShrines(state: GameState): void {
+  for (const player of state.players) {
+    for (const entry of player.ethereal ?? []) {
+      const monster = entry.attachedMonster
+      if (!monster) continue
+      const before = monster.hp
+      monster.hp = Math.min(monster.maxHp, monster.hp + 10)
+      recordHeal(state, monster.hp - before)
+      if (monster.hp !== before) {
+        log(state, `${getMonster(monster.defId).name} heals 10 from Shrine of Healing (now ${monster.hp} HP).`)
+      }
+    }
+  }
+}
+
+function sealedArchers(state: GameState): { owner: PlayerId; instanceId: string }[] {
+  const found: { owner: PlayerId; instanceId: string }[] = []
+  for (const player of state.players) {
+    for (const monster of player.field) {
+      if (monster?.abilitiesSealed) found.push({ owner: player.id, instanceId: monster.instanceId })
+    }
+  }
+  return found
+}
+
+function queueArrowShots(state: GameState): void {
+  const archers = sealedArchers(state)
+  const first = archers[0]
+  if (!first) return
+  state.pending = {
+    kind: 'arrowVolley',
+    owner: first.owner,
+    instanceId: first.instanceId,
+    queue: archers.slice(1),
+  }
+  log(state, 'Unrelenting Arrows may deal 10 damage to a card.')
+}
+
+function scheduledReturns(state: GameState, playerId: PlayerId) {
+  const queue: { controller: PlayerId; instanceId: string; attached: boolean }[] = []
+  for (const player of state.players) {
+    for (const entry of player.ethereal ?? []) {
+      if (entry.monster && entry.returnPlayer === playerId) {
+        queue.push({ controller: player.id, instanceId: entry.monster.instanceId, attached: false })
+      }
+    }
+  }
+  return queue
+}
+
+function beginEtherealReturns(state: GameState): void {
+  const queue = scheduledReturns(state, state.activePlayer)
+  const waiting = []
+  for (const item of queue) {
+    const owner = state.players[item.controller]
+    if (owner.field.every((monster) => monster !== null)) {
+      const entry = (owner.ethereal ?? []).find((candidate) => candidate.monster?.instanceId === item.instanceId)
+      if (entry?.monster) {
+        owner.ethereal = (owner.ethereal ?? []).filter((candidate) => candidate !== entry)
+        if (owner.ethereal.length === 0) owner.ethereal = undefined
+        removeMonsterWithoutPoints(state, owner.id, entry.monster)
+      }
+      continue
+    }
+    waiting.push(item)
+  }
+  if (waiting.length === 0) return
+  state.pending = { kind: 'etherealReturn', owner: state.activePlayer, queue: waiting }
+  log(state, 'Choose an empty slot for the returning monster.')
+}
+
 function passTurn(state: GameState): void {
   const player = activePlayer(state)
   player.isFirstTurn = false
   player.hasFinishedFirstTurn = true
+  player.healedLastTurn = player.healedThisTurn ?? 0
+  player.healedThisTurn = 0
+  if (player.blockEffects) player.blockEffects = undefined
 
   player.attackBonus = 0
 
@@ -478,6 +586,11 @@ function passTurn(state: GameState): void {
     state.drewThisTurn = false
     state.abilityUsesLeft = 0
     state.actedSlots = []
+    expireStalks(state, player.id)
+    if (player.silenceNextTurn) {
+      player.blockEffects = true
+      player.silenceNextTurn = undefined
+    }
     expireHauntedMists(state, player)
     log(state, `${player.name} takes another turn. Pass the device to ${player.name}.`)
     return
@@ -497,6 +610,11 @@ function passTurn(state: GameState): void {
   state.awaitingHandoff = true
 
   const nextPlayer = activePlayer(state)
+  expireStalks(state, nextPlayer.id)
+  if (nextPlayer.silenceNextTurn) {
+    nextPlayer.blockEffects = true
+    nextPlayer.silenceNextTurn = undefined
+  }
   expireHauntedMists(state, nextPlayer)
   if (nextPlayer.isFirstTurn) {
     beginMainPhase(state)
@@ -1692,7 +1810,7 @@ function resolveSpecialAbility(
     }
     case 'tailGale': {
       if (!target) break
-      dealDamageToTarget(state, attacker, target, 30, 'untyped', false, requiredEnergy)
+      dealDamageToTarget(state, attacker, target, 30, 'wind', false, requiredEnergy)
       offerWithdraw(state, target, false)
       break
     }
@@ -1869,6 +1987,123 @@ function resolveSpecialAbility(
         offerChargedEnergy(state, player.id, slot, again)
       }
       break
+    case 'stalk': {
+      const marked = targetMonster(state, target)
+      if (!marked || !target || target.kind !== 'monster') break
+      marked.stalkedBy = [...new Set([...(marked.stalkedBy ?? []), player.id])]
+      log(state, `${getMonster(marked.defId).name} is Stalked until ${player.name}'s next turn.`)
+      break
+    }
+    case 'silence': {
+      const opponent = state.players[otherPlayer(player.id)]
+      opponent.silenceNextTurn = true
+      log(state, `${opponent.name} may not play effects on their next turn.`)
+      break
+    }
+    case 'unrelentingArrows':
+      attacker.abilitiesSealed = true
+      log(state, `${getMonster(attacker.defId).name} may not use an ability for the rest of the game.`)
+      break
+    case 'bodyGuard': {
+      const guard = targetMonster(state, target)
+      if (!guard || !target || target.kind !== 'monster' || target.player !== player.id) break
+      if (guard.instanceId === attacker.instanceId) break
+      beginProtection(state, guard, attacker)
+      break
+    }
+    case 'tax': {
+      const opponent = state.players[otherPlayer(player.id)]
+      if (opponent.hand.length === 0) {
+        attacker.gold = (attacker.gold ?? 0) + 1
+        log(state, `${getMonster(attacker.defId).name} gains 1 gold.`)
+        break
+      }
+      state.pending = { kind: 'tax', owner: opponent.id, sourcePlayer: player.id, sourceSlot: slot }
+      log(state, `${opponent.name} gives a card from hand, or chooses a card they control to take 50 damage.`)
+      break
+    }
+    case 'soar': {
+      const chosen = targetMonster(state, target)
+      if (!chosen || !target || target.kind !== 'monster') break
+      if (chosen.instanceId === attacker.instanceId) break
+      const targetOwner = state.players[target.player]
+      becomeEthereal(state, targetOwner, target.slot, player.id)
+      const selfSlot = player.field.findIndex((monster) => monster?.instanceId === attacker.instanceId)
+      if (selfSlot >= 0) becomeEthereal(state, player, selfSlot, player.id)
+      break
+    }
+    case 'dancingWind':
+      if (target) dealDamageToTarget(state, attacker, target, 10, 'wind', false, requiredEnergy)
+      {
+        const selfSlot = player.field.findIndex((monster) => monster?.instanceId === attacker.instanceId)
+        if (selfSlot >= 0) becomeEthereal(state, player, selfSlot)
+      }
+      break
+    case 'renderAid': {
+      for (const heal of action.targets ?? []) healTarget(state, heal, 30)
+      player.bonusEnergy = (player.bonusEnergy ?? 0) + 1
+      log(state, `${player.name} gains 1 additional energy in the energy phase.`)
+      break
+    }
+    case 'wisdomWinds': {
+      const count = countEtherealCards(state)
+      if (count === 0) {
+        log(state, 'No Ethereal cards are in play.')
+        break
+      }
+      const receiver = state.players.some((side) => side.field.some((monster) => monster && canReceiveEnergy(monster)))
+      if (!receiver) {
+        log(state, 'No card can gain energy.')
+        break
+      }
+      state.pending = { kind: 'wisdomEnergy', owner: player.id, slot, remaining: count }
+      log(state, `Choose a card to gain 1 energy (${count} remaining).`)
+      break
+    }
+    case 'stormComing':
+      attacker.abilitiesUnlocked = true
+      log(state, `${getMonster(attacker.defId).name} unlocks its other abilities.`)
+      break
+    case 'sandstorm':
+      for (const side of state.players) {
+        for (let index = 0; index < side.field.length; index++) {
+          const monster = side.field[index]
+          if (!monster || monster.instanceId === attacker.instanceId) continue
+          dealDamageToTarget(
+            state,
+            attacker,
+            { kind: 'monster', player: side.id, slot: index },
+            30,
+            'untyped',
+            false,
+            requiredEnergy,
+            false,
+            ['earth', 'wind'],
+          )
+        }
+      }
+      break
+    case 'buriedAlive': {
+      const victim = targetMonster(state, target)
+      if (!victim) break
+      if (victim.equipment.some((equipment) => equipment.defId === 'saphire_ring')) {
+        log(state, `${getMonster(victim.defId).name} is immune to negative status effects.`)
+        break
+      }
+      victim.clingTargetInstanceId = undefined
+      for (const side of state.players) {
+        for (const other of side.field) {
+          if (other?.clingTargetInstanceId === victim.instanceId) other.clingTargetInstanceId = undefined
+        }
+      }
+      victim.statuses = []
+      if (applyStatus(victim, 'stone', 0, 1, undefined, false, player.id)) {
+        const stone = victim.statuses.find((status) => status.kind === 'stone')
+        if (stone) stone.cure = 'skipEnergy'
+        log(state, `${getMonster(victim.defId).name} becomes Stone.`)
+      }
+      break
+    }
     case 'ancientPowers': {
       if (target) {
         dealDamageToTarget(
@@ -2016,6 +2251,58 @@ function cardPlayCounts(
 function noteCardPlay(state: GameState): void {
   state.playedCardThisTurn = true
   state.cardsPlayedThisTurn = (state.cardsPlayedThisTurn ?? 0) + 1
+}
+
+function takeReturningMonster(
+  state: GameState,
+  controller: PlayerId,
+  instanceId: string,
+  scheduled: boolean,
+): FieldMonster | null {
+  const owner = state.players[controller]
+  const entries = owner.ethereal ?? []
+  if (!scheduled) {
+    const shrine = entries.find((entry) => entry.attachedMonster?.instanceId === instanceId)
+    if (shrine?.attachedMonster) {
+      const monster = shrine.attachedMonster
+      shrine.attachedMonster = undefined
+      return monster
+    }
+  }
+  const index = entries.findIndex((entry) => entry.monster?.instanceId === instanceId)
+  if (index < 0) return null
+  const entry = entries[index]
+  if (!entry?.monster) return null
+  if (scheduled && entry.returnPlayer === undefined) return null
+  if (!scheduled && entry.returnPlayer !== undefined) return null
+  entries.splice(index, 1)
+  owner.ethereal = entries.length > 0 ? entries : undefined
+  return entry.monster
+}
+
+function bounceToHand(state: GameState, target: TargetRef): void {
+  const resolved = resolveTarget(state, target)
+  if (!resolved) return
+  const owner = resolved.player
+  if (target.kind === 'equipment') {
+    const equipment = resolved.monster.equipment[target.equipmentIndex]
+    if (!equipment) return
+    if (equipment.defId === 'resilience') removeResilience(resolved.monster)
+    resolved.monster.equipment.splice(target.equipmentIndex, 1)
+    owner.hand.push({ instanceId: equipment.instanceId, defId: equipment.defId })
+    log(state, `${getCard(equipment.defId).name} returns to ${owner.name}'s hand.`)
+    return
+  }
+  const monster = resolved.monster
+  if (monster.protectingInstanceId) releaseProtection(state, monster)
+  for (const equipment of [...monster.equipment]) {
+    owner.discard.push({ instanceId: equipment.instanceId, defId: equipment.defId })
+  }
+  monster.equipment = []
+  owner.hand.push({ instanceId: monster.instanceId, defId: monster.defId })
+  owner.field[resolved.slot] = null
+  log(state, `${getMonster(monster.defId).name} returns to ${owner.name}'s hand.`)
+  checkLosses(state)
 }
 
 function playEffect(
@@ -2307,6 +2594,9 @@ function playEffect(
     case 'hauntedMists':
       holdMists = true
       break
+    case 'targetedHurricane':
+      if (targets[0]) bounceToHand(state, targets[0])
+      break
   }
 
   if (holdMists) {
@@ -2461,6 +2751,7 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
         break
       }
       log(next, `${player.name}'s turn begins.`)
+      beginEtherealReturns(next)
       break
     }
     case 'KEEP_OPENING_HAND':
@@ -2572,6 +2863,16 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
         if (costsTeam) next.abilityUsesLeft = Math.max(0, next.abilityUsesLeft - 1)
       } else if (!alreadyActed) {
         next.actedSlots.push(action.slot)
+      }
+      const stalked = player.field[action.slot]
+      if (stalked?.stalkedBy?.length) {
+        dealDamageToTarget(
+          next,
+          null,
+          { kind: 'monster', player: player.id, slot: action.slot },
+          40,
+          'shadow',
+        )
       }
       if (hasFishingRod(monster) && hasSpareEnergy(monster, requiredEnergy)) {
         const drawn = player.deck.shift()
@@ -2744,21 +3045,19 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
         next.bannerEnergyPool <= 0 &&
         !canUseDarkCharge(player)
       ) {
-        next.phase = 'end'
+        finishEnergyPhase(next)
       }
       break
     }
     case 'FINISH_ENERGY': {
-      next.blobEnergyPool = 0
-      next.bannerEnergyPool = 0
-      next.phase = 'end'
+      finishEnergyPhase(next)
       break
     }
     case 'SKIP_ENERGY': {
       next.energyPool = 0
       next.blobEnergyPool = 0
       next.bannerEnergyPool = 0
-      if (!canUseDarkCharge(player)) next.phase = 'end'
+      if (!canUseDarkCharge(player)) finishEnergyPhase(next)
       log(next, `${player.name} skips energy attach.`)
       break
     }
@@ -3328,6 +3627,8 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       if (pending.remaining <= 0) {
         clearPending(next)
         tickStatuses(next)
+        healShrines(next)
+        queueArrowShots(next)
         if (next.winner === null && next.pending === null) passTurn(next)
       }
       break
@@ -3806,8 +4107,135 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       )
       break
     }
+    case 'PLAY_STRUCTURE': {
+      const card = player.hand[action.handIndex]
+      const def = card ? getCard(card.defId) : null
+      const host = player.field[action.slot]
+      if (!card || def?.kind !== 'structure' || !host) break
+      player.hand.splice(action.handIndex, 1)
+      const lifted = liftMonster(next, player, action.slot)
+      if (!lifted) {
+        player.hand.splice(action.handIndex, 0, card)
+        break
+      }
+      player.ethereal = [...(player.ethereal ?? []), { card, attachedMonster: lifted }]
+      if (cardPlayCounts(next.pending, undefined, next.recursion?.replayingNow === true)) noteCardPlay(next)
+      log(next, `${def.name} becomes Ethereal and attaches ${getMonster(lifted.defId).name}.`)
+      checkLosses(next)
+      break
+    }
+    case 'RETURN_ETHEREAL': {
+      if (player.field[action.slot]) break
+      const placed = takeReturningMonster(next, player.id, action.instanceId, false)
+      if (!placed) break
+      placeMonsterOnField(next, player.id, action.slot, placed, action.stance)
+      break
+    }
+    case 'ETHEREAL_PLACE': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'etherealReturn') break
+      const current = pending.queue[0]
+      if (!current) {
+        clearPending(next)
+        break
+      }
+      const owner = next.players[current.controller]
+      if (owner.field[action.slot]) break
+      const placed = takeReturningMonster(next, current.controller, current.instanceId, true)
+      if (!placed) {
+        pending.queue.shift()
+      } else {
+        placeMonsterOnField(next, current.controller, action.slot, placed, action.stance)
+        pending.queue.shift()
+      }
+      if (pending.queue.length === 0) clearPending(next)
+      break
+    }
+    case 'TAX_GIVE': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'tax') break
+      const giver = next.players[pending.owner]
+      const index = giver.hand.findIndex((card) => card.instanceId === action.instanceId)
+      const card = index >= 0 ? giver.hand.splice(index, 1)[0] : undefined
+      if (!card) break
+      next.players[pending.sourcePlayer].hand.push(card)
+      log(next, `${giver.name} gives ${getCard(card.defId).name} to ${next.players[pending.sourcePlayer].name}.`)
+      clearPending(next)
+      break
+    }
+    case 'TAX_DAMAGE': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'tax') break
+      dealDamageToTarget(next, null, action.target, 50)
+      clearPending(next)
+      break
+    }
+    case 'STONE_CURE': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'stoneCure') break
+      for (const monster of player.field) {
+        if (monster?.instanceId !== action.instanceId) continue
+        monster.statuses = monster.statuses.filter((status) => status.kind !== 'stone')
+        log(next, `${getMonster(monster.defId).name} is no longer Stone.`)
+      }
+      clearPending(next)
+      finishEnergyPhase(next)
+      break
+    }
+    case 'STONE_KEEP':
+      if (next.pending?.kind === 'stoneCure') clearPending(next)
+      break
+    case 'ARROW_SHOT':
+    case 'ARROW_SKIP': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'arrowVolley') break
+      if (action.type === 'ARROW_SHOT') {
+        let source: FieldMonster | null = null
+        for (const side of next.players) {
+          const found = side.field.find((monster) => monster?.instanceId === pending.instanceId)
+          if (found) source = found
+        }
+        dealDamageToTarget(next, source, action.target, 10)
+      }
+      const nextArcher = pending.queue.shift()
+      if (next.winner !== null) break
+      if (nextArcher) {
+        next.pending = {
+          kind: 'arrowVolley',
+          owner: nextArcher.owner,
+          instanceId: nextArcher.instanceId,
+          queue: pending.queue,
+        }
+      } else {
+        clearPending(next)
+        passTurn(next)
+      }
+      break
+    }
+    case 'WISDOM_ENERGY': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'wisdomEnergy') break
+      const monster = targetMonster(next, action.target)
+      if (monster && action.target.kind === 'monster' && grantEnergy(next, monster, 1) > 0) {
+        log(next, `${getMonster(monster.defId).name} gains 1 energy.`)
+      }
+      pending.remaining -= 1
+      if (pending.remaining <= 0) clearPending(next)
+      break
+    }
     case 'END_TURN': {
+      if (next.phase === 'energy') {
+        finishEnergyPhase(next)
+        if (next.pending !== null) break
+      }
       if (!next.endStepResolved) {
+        const excess = player.hand.length - HAND_SIZE_LIMIT
+        if (excess > 0) {
+          beginForcedDiscard(next, player.id, excess)
+          next.phase = 'end'
+          log(next, `${player.name} must discard down to ${HAND_SIZE_LIMIT}.`)
+          break
+        }
         resolveEndStep(next)
         next.endStepResolved = true
       }

@@ -41,6 +41,11 @@ function pendingDecisionPlayer(pending: PendingInteraction): PlayerId {
     case 'summonType':
     case 'enchantStone':
     case 'starbeamEnergy':
+    case 'etherealReturn':
+    case 'tax':
+    case 'stoneCure':
+    case 'arrowVolley':
+    case 'wisdomEnergy':
     case 'goldenDie':
     case 'replayEffect':
     case 'mirrorPick':

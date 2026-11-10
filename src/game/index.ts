@@ -40,7 +40,7 @@ export { createGame, sampleDeck, shuffleWith } from './setup'
 export type { DeckSetup } from './setup'
 export type { CardSearchType } from './catalog'
 export type * from './types'
-export { FIELD_SIZE, STARTING_HAND, STARTING_POINTS } from './types'
+export { FIELD_SIZE, HAND_SIZE_LIMIT, STARTING_HAND, STARTING_POINTS } from './types'
 export {
   chooseAction,
   decisionPlayer,

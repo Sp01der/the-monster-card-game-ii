@@ -294,6 +294,25 @@ function describeAction(state: GameState, action: GameAction): string {
       return state.pending?.kind === 'chargedSplat' && state.pending.step === 'energy'
         ? 'Give 1 energy to a blob'
         : 'Charged Splat'
+    case 'PLAY_STRUCTURE':
+      return 'Attach to this monster'
+    case 'RETURN_ETHEREAL':
+    case 'ETHEREAL_PLACE':
+      return action.stance === 'withdrawn' ? 'Return withdrawn' : 'Return active'
+    case 'TAX_GIVE':
+      return 'Give this card'
+    case 'TAX_DAMAGE':
+      return '50 damage'
+    case 'STONE_CURE':
+      return 'Skip energy and remove Stone'
+    case 'STONE_KEEP':
+      return 'Keep Stone and take energy'
+    case 'ARROW_SHOT':
+      return '10 damage'
+    case 'ARROW_SKIP':
+      return 'Do not shoot'
+    case 'WISDOM_ENERGY':
+      return 'Give 1 energy'
   }
 }
 
@@ -401,7 +420,10 @@ export function Board({
     }
     const playable = legal.some(
       (a) =>
-        (a.type === 'PLAY_MONSTER' || a.type === 'PLAY_EFFECT' || a.type === 'PLAY_EQUIPMENT') &&
+        (a.type === 'PLAY_MONSTER' ||
+          a.type === 'PLAY_EFFECT' ||
+          a.type === 'PLAY_EQUIPMENT' ||
+          a.type === 'PLAY_STRUCTURE') &&
         a.fromDiscard &&
         a.handIndex === darklightPick,
     )
@@ -691,6 +713,13 @@ export function Board({
           if (host) highlightTargets.add(`slot-${active.id}-${a.slot}-${host.stance}`)
         }
       }
+    } else if (def.kind === 'structure') {
+      prompt = 'Choose a monster you control. It becomes Ethereal and is attached to this card.'
+      for (const action of legal) {
+        if (action.type === 'PLAY_STRUCTURE' && action.handIndex === sel.handIndex) {
+          highlightTargets.add(`mon-${active.id}-${action.slot}`)
+        }
+      }
     } else if (def.kind === 'equipment') {
       prompt = 'Choose one of your monsters to equip.'
       for (const a of legal) {
@@ -806,6 +835,28 @@ export function Board({
     for (const action of legal) {
       if (action.type === 'STARBEAM_ENERGY') highlightTargets.add(targetKey(action.target))
     }
+  } else if (state.pending?.kind === 'etherealReturn') {
+    prompt = 'Choose an empty slot for the returning monster.'
+    const current = state.pending.queue[0]
+    for (const action of legal) {
+      if (action.type === 'ETHEREAL_PLACE' && current) {
+        highlightTargets.add(`slot-${current.controller}-${action.slot}-${action.stance}`)
+      }
+    }
+  } else if (state.pending?.kind === 'tax') {
+    prompt = 'Give a card from your hand, or choose a card you control to take 50 damage.'
+  } else if (state.pending?.kind === 'stoneCure') {
+    prompt = 'Skip this energy phase to remove Stone, or keep Stone and take the energy.'
+  } else if (state.pending?.kind === 'arrowVolley') {
+    prompt = 'Unrelenting Arrows may deal 10 damage to a card.'
+    for (const action of legal) {
+      if (action.type === 'ARROW_SHOT') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'wisdomEnergy') {
+    prompt = `Choose a card to gain 1 energy (${state.pending.remaining} remaining).`
+    for (const action of legal) {
+      if (action.type === 'WISDOM_ENERGY') highlightTargets.add(targetKey(action.target))
+    }
   } else if (state.pending?.kind === 'chargedSplat') {
     prompt = state.pending.step === 'energy'
       ? 'Give 1 energy to a blob.'
@@ -894,6 +945,17 @@ export function Board({
   function onFieldSlotClick(playerId: 0 | 1, slot: number, stance?: Stance) {
     if (darklightModalOpen) return
     const clicked: TargetRef = { kind: 'monster', player: playerId, slot }
+    if (!state.pending && stance) {
+      const returns = legal.filter(
+        (action): action is Extract<GameAction, { type: 'RETURN_ETHEREAL' }> =>
+          action.type === 'RETURN_ETHEREAL' && action.slot === slot && action.stance === stance,
+      )
+      const ids = new Set(returns.map((action) => action.instanceId))
+      if (ids.size === 1 && returns[0]) {
+        dispatch(returns[0])
+        return
+      }
+    }
     if (state.pending?.kind === 'assignGold' && playerId === state.pending.owner) {
       const action = legal.find((a) => a.type === 'ASSIGN_GOLD' && a.slot === slot)
       if (action) dispatch(action)
@@ -968,6 +1030,39 @@ export function Board({
     if (state.pending?.kind === 'starbeamEnergy') {
       const action = legal.find(
         (a) => a.type === 'STARBEAM_ENERGY' && actionsEqualTargets(a.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'etherealReturn') {
+      const current = state.pending.queue[0]
+      const action = legal.find(
+        (candidate) =>
+          candidate.type === 'ETHEREAL_PLACE' &&
+          current?.controller === playerId &&
+          candidate.slot === slot &&
+          candidate.stance === stance,
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'wisdomEnergy') {
+      const action = legal.find(
+        (candidate) => candidate.type === 'WISDOM_ENERGY' && actionsEqualTargets(candidate.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'arrowVolley') {
+      const action = legal.find(
+        (candidate) => candidate.type === 'ARROW_SHOT' && actionsEqualTargets(candidate.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'tax' && playerId === state.pending.owner) {
+      const action = legal.find(
+        (candidate) => candidate.type === 'TAX_DAMAGE' && actionsEqualTargets(candidate.target, clicked),
       )
       if (action) dispatch(action)
       return
@@ -1059,6 +1154,17 @@ export function Board({
           dispatch(playMon)
           return
         }
+      }
+      const playStructure = legal.find(
+        (a) =>
+          a.type === 'PLAY_STRUCTURE' &&
+          a.handIndex === sel.handIndex &&
+          a.slot === slot &&
+          playerId === active.id,
+      )
+      if (playStructure) {
+        dispatch(playStructure)
+        return
       }
       const playEq = legal.find(
         (a) =>
@@ -1345,6 +1451,16 @@ export function Board({
   function onEquipmentClick(playerId: 0 | 1, slot: number, equipmentIndex: number) {
     if (darklightModalOpen) return
     const t: TargetRef = { kind: 'equipment', player: playerId, slot, equipmentIndex }
+    if (state.pending?.kind === 'tax') {
+      const action = legal.find((a) => a.type === 'TAX_DAMAGE' && actionsEqualTargets(a.target, t))
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'arrowVolley') {
+      const action = legal.find((a) => a.type === 'ARROW_SHOT' && actionsEqualTargets(a.target, t))
+      if (action) dispatch(action)
+      return
+    }
     if (state.pending?.kind === 'fairyHeal') {
       const action = legal.find(
         (a) => a.type === 'FAIRY_HEAL' && actionsEqualTargets(a.target, t),
@@ -1511,7 +1627,7 @@ export function Board({
 
       <section className="center-panel">
         <p className="prompt">{prompt}{rallyFirst ? ' Now choose the second monster.' : ''}</p>
-        {legal.some((action) => action.type === 'PEGASUS_MOVE' || action.type === 'VERIDIAN_PAY' || action.type === 'BLOODCRAFT_PICK' || action.type === 'HAUNTED_PICK' || action.type === 'FIREBALL_DISCARD' || action.type === 'TOME_PICK' || action.type === 'SUMMON_TYPE' || action.type === 'ENCHANT_STONE') && (
+        {legal.some((action) => action.type === 'PEGASUS_MOVE' || action.type === 'VERIDIAN_PAY' || action.type === 'BLOODCRAFT_PICK' || action.type === 'HAUNTED_PICK' || action.type === 'FIREBALL_DISCARD' || action.type === 'TOME_PICK' || action.type === 'SUMMON_TYPE' || action.type === 'ENCHANT_STONE' || action.type === 'TAX_GIVE' || action.type === 'STONE_CURE' || action.type === 'STONE_KEEP' || action.type === 'ARROW_SKIP') && (
           <div className="chip-row">
             {legal.flatMap((action) => {
               if (action.type === 'PEGASUS_MOVE') {
@@ -1550,6 +1666,22 @@ export function Board({
                 return [(
                   <button key={action.instanceId} type="button" className="chip" onClick={() => dispatch(action)}>
                     Discard {card ? getCard(card.defId).name : 'card'}
+                  </button>
+                )]
+              }
+              if (action.type === 'TAX_GIVE') {
+                const giver = state.pending?.kind === 'tax' ? state.players[state.pending.owner] : active
+                const card = giver.hand.find((entry) => entry.instanceId === action.instanceId)
+                return [(
+                  <button key={action.instanceId} type="button" className="chip" onClick={() => dispatch(action)}>
+                    Give {card ? getCard(card.defId).name : 'card'}
+                  </button>
+                )]
+              }
+              if (action.type === 'STONE_CURE' || action.type === 'STONE_KEEP' || action.type === 'ARROW_SKIP') {
+                return [(
+                  <button key={action.type + ('instanceId' in action ? action.instanceId : '')} type="button" className="chip" onClick={() => dispatch(action)}>
+                    {describeAction(state, action)}
                   </button>
                 )]
               }
@@ -1982,6 +2114,7 @@ export function Board({
                     (a.type === 'PLAY_MONSTER' ||
                       a.type === 'PLAY_EFFECT' ||
                       a.type === 'PLAY_EQUIPMENT' ||
+                      a.type === 'PLAY_STRUCTURE' ||
                       a.type === 'REPLACE_MONSTER') &&
                     !a.fromDiscard &&
                     a.handIndex === handIndex,
@@ -2056,6 +2189,16 @@ export function Board({
                   >
                     <CardFace defId={entry.card.defId} compact />
                     <span className="ethereal-owner">{player.name}</span>
+                    {entry.attachedMonster && (
+                      <span className="ethereal-memory">
+                        Attached: {getCard(entry.attachedMonster.defId).name} ♥ {entry.attachedMonster.hp}
+                      </span>
+                    )}
+                    {entry.monster && (
+                      <span className="ethereal-memory">
+                        {getCard(entry.monster.defId).name} ♥ {entry.monster.hp}
+                      </span>
+                    )}
                     {remembered && <span className="ethereal-memory">{remembered}</span>}
                   </button>
                 )
@@ -2102,6 +2245,7 @@ export function Board({
                     (a.type === 'PLAY_MONSTER' ||
                       a.type === 'PLAY_EFFECT' ||
                       a.type === 'PLAY_EQUIPMENT' ||
+                      a.type === 'PLAY_STRUCTURE' ||
                       a.type === 'REPLACE_MONSTER') &&
                     a.fromDiscard &&
                     a.handIndex === discardIndex,
@@ -2458,8 +2602,14 @@ export function Board({
           <div className="modal-panel" role="dialog" aria-label="Choose a card to discard">
             <header className="modal-header">
               <h2>
-                {state.players[handDiscardPending.player].name}: choose a card to discard
-                {handDiscardPending.remaining > 1 ? ` (${handDiscardPending.remaining} remaining)` : ''}
+                {state.phase === 'end' &&
+                !state.endStepResolved &&
+                handDiscardPending.player === state.activePlayer
+                  ? `${state.players[handDiscardPending.player].name}: discard down to 7`
+                  : `${state.players[handDiscardPending.player].name}: choose a card to discard`}
+                {handDiscardPending.remaining > 1
+                  ? ` (${handDiscardPending.remaining} remaining)`
+                  : ''}
               </h2>
             </header>
             <div className="discard-grid">

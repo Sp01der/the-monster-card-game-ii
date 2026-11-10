@@ -232,6 +232,14 @@ export function effectTargetOptions(state: GameState, effectId: string): TargetR
       ? state.pending.owner
       : state.activePlayer
   switch (effectId) {
+    case 'targetedHurricane':
+      return anyCardTargets(state).filter((target) => {
+        if (target.kind !== 'monster' || target.player === actorId) return true
+        const owner = state.players[target.player]
+        const onField = owner.field.filter((monster) => monster !== null).length
+        const ethereal = (owner.ethereal ?? []).filter((entry) => entry.monster || entry.attachedMonster).length
+        return onField + ethereal > 1
+      }).map((target) => [target])
     case 'whirlpool':
       return withHostEquipment(
         state,

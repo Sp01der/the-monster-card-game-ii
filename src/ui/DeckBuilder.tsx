@@ -50,6 +50,7 @@ const KIND_ORDER: Record<CardKind, number> = {
   monster: 0,
   effect: 1,
   equipment: 2,
+  structure: 3,
 }
 
 const FILTERS: { id: KindFilter; label: string }[] = [
@@ -57,6 +58,7 @@ const FILTERS: { id: KindFilter; label: string }[] = [
   { id: 'monster', label: 'Monsters' },
   { id: 'effect', label: 'Effects' },
   { id: 'equipment', label: 'Equipment' },
+  { id: 'structure', label: 'Structures' },
 ]
 
 const TYPE_FILTERS: { id: CardSearchType; label: string; group: 'Damage' | 'Family' | 'Trait' }[] = [

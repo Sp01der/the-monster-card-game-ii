@@ -200,7 +200,7 @@ const ABILITY_TEXT: Record<string, string> = {
   attracting_melody: 'Draw two cards.',
   magic_music: '20 sonic damage, twice. Each hit chooses its own target.',
   serpents_fang: '20 poison damage and poison for 1 turn.',
-  tail_gale: '30 damage and withdraw the target.',
+  tail_gale: '30 wind damage and withdraw the target.',
   raid: '30 damage and gain 1 gold if the target took damage.',
   treblae_shot: '50 damage.',
   speaker_rally: "Choose two other monster cards, which gain 1 energy each. Activate this card's passive.",
@@ -233,9 +233,39 @@ const ABILITY_TEXT: Record<string, string> = {
   big_yellow_wakkle: '30 damage.',
   charged_splat: 'Goo a target and give 1 energy to a blob. 1/6 chance to do it again.',
   big_black_wakkle: '30 shadow damage.',
+  stalk: 'Choose a monster. If it uses an ability before your next turn, it takes 40 shadow damage.',
+  silence: 'Your opponent may not play effects on their next turn.',
+  archer_spear: '20 damage. 3/6 chance of 30 damage instead.',
+  volley: '20 damage.',
+  unrelenting_arrows:
+    'This card may not use an ability for the rest of the game. While it is in play, it may deal 10 damage to any card at the end of each turn.',
+  heirloom_sword: '40 damage.',
+  body_guard: 'Choose a monster you control. It protects this card.',
+  tax: 'Your opponent gives you a card from their hand, or chooses a card they control to take 50 damage. If they have no cards in hand, this card gains 1 gold.',
+  great_wing: '20 wind damage.',
+  soar: 'Choose a monster. It and this card become Ethereal until your next turn.',
+  wind_punch: '30 wind damage.',
+  dancing_on_the_wind: '10 wind damage. This card becomes Ethereal. You may return it to the field on your turn.',
+  electro_blades: '20 electric piercing damage, twice.',
+  guard_protocol: 'Protect a card.',
+  way_of_the_wind: '0 wind damage.',
+  render_aid: 'Heal a monster controlled by each player 30 HP. You gain 1 additional energy in the energy phase.',
+  wisdom_of_the_winds: 'For each Ethereal card, choose a card to gain 1 energy.',
+  gust: '10 wind damage.',
+  storm_coming: "Unlock this card's other abilities.",
+  dust_devil: '40 wind and earth damage.',
+  sandstorm: 'Every other monster takes 30 earth and wind damage.',
+  buried_alive: 'A target monster becomes Stone. Its owner may skip an energy phase to remove Stone.',
+}
+
+const STRUCTURE_TEXT: Record<string, string> = {
+  shrineOfHealing:
+    'This card is Ethereal. Choose a monster you control. It becomes Ethereal and is attached to this card. At the end of each turn it heals 10 HP. It may not gain energy while attached. On your turn you may return it to the field.',
 }
 
 const EFFECT_TEXT: Record<string, string> = {
+  targetedHurricane:
+    "Return a target card to its owner's hand. This cannot target an opponent's last monster.",
   heal_30: 'Heal 30 HP.',
   energy_3: 'Give a card 3 energy.',
   damage_20_any: '20 damage.',
@@ -352,6 +382,7 @@ export function cardSummary(defId: string): string {
   if (card.kind === 'equipment') {
     return `Equipment · ${card.maxHp} HP`
   }
+  if (card.kind === 'structure') return card.ethereal ? 'Ethereal structure' : 'Structure'
   return 'Effect'
 }
 
@@ -359,6 +390,7 @@ export function cardBodyText(defId: string): string {
   const card = getCard(defId)
   if (card.kind === 'effect') return EFFECT_TEXT[card.effectId] ?? ''
   if (card.kind === 'equipment') return EQUIPMENT_TEXT[card.equipmentId] ?? ''
+  if (card.kind === 'structure') return STRUCTURE_TEXT[card.structureId] ?? ''
   return ''
 }
 

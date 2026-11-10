@@ -27,7 +27,7 @@ export type SummonElement =
   | 'light'
   | 'plant'
 
-export type CardKind = 'monster' | 'effect' | 'equipment'
+export type CardKind = 'monster' | 'effect' | 'equipment' | 'structure'
 
 export type TurnPhase = 'draw' | 'main' | 'move' | 'energy' | 'end'
 
@@ -40,7 +40,7 @@ export type EnergyCost = {
   spend: number
 }
 
-export type StatusKind = 'goo' | 'frozen' | 'burn' | 'poison' | 'wet' | 'cling' | 'weakened'
+export type StatusKind = 'goo' | 'frozen' | 'burn' | 'poison' | 'wet' | 'cling' | 'weakened' | 'stone'
 
 export type StatusInstance = {
   kind: StatusKind
@@ -52,6 +52,8 @@ export type StatusInstance = {
   sourceInstanceId?: string
   /** Player who applied this status. Burn and poison use it when they kill. */
   sourcePlayer?: PlayerId
+  /** Buried Alive's Stone can be removed by skipping an energy phase. */
+  cure?: 'skipEnergy'
 }
 
 export type AbilityChoice =
@@ -142,7 +144,17 @@ export type EquipmentDef = {
   attackProof?: boolean
 }
 
-export type CardDef = MonsterDef | EffectDef | EquipmentDef
+/** A structure. Ethereal structures are not on the field and have no HP. */
+export type StructureDef = {
+  kind: 'structure'
+  id: string
+  name: string
+  structureId: string
+  ethereal?: boolean
+  maxHp?: number
+}
+
+export type CardDef = MonsterDef | EffectDef | EquipmentDef | StructureDef
 
 export type FieldMonster = {
   instanceId: string
@@ -196,6 +208,12 @@ export type FieldMonster = {
   tome?: string[]
   /** Absorb: one card held under this card. It is not in play. */
   held?: HeldCard
+  /** Stalk: using an ability before this player's next turn deals 40 shadow damage. */
+  stalkedBy?: PlayerId[]
+  /** Unrelenting Arrows: this card cannot use abilities for the rest of the game. */
+  abilitiesSealed?: boolean
+  /** Sandstorm Golem: Storm Coming has unlocked the other abilities. */
+  abilitiesUnlocked?: boolean
 }
 
 /** A card placed under another card by Absorb. */
@@ -242,6 +260,12 @@ export type EtherealEntry = {
   card: HandCard
   /** Rewind remembers a card. Haunted Mists has no snapshot. */
   snapshot?: CardSnapshot
+  /** A monster kept off the field. It still counts for its owner. */
+  monster?: FieldMonster
+  /** Soar: return this monster when this player starts their next turn. */
+  returnPlayer?: PlayerId
+  /** Shrine of Healing: the monster attached to this structure. */
+  attachedMonster?: FieldMonster
 }
 
 export type PlayerState = {
@@ -276,6 +300,16 @@ export type PlayerState = {
   bonusTeamActions?: number
   /** Ethereal cards. They are in the match, but not on the field. */
   ethereal?: EtherealEntry[]
+  /** Silence: this player cannot play effects on the turn that is about to start. */
+  silenceNextTurn?: boolean
+  /** Silence is active for the current turn. */
+  blockEffects?: boolean
+  /** Actual HP restored to monsters during this turn. */
+  healedThisTurn?: number
+  /** Actual HP restored to monsters during the previous turn. */
+  healedLastTurn?: number
+  /** Render Aid: extra energy in the upcoming energy phase. */
+  bonusEnergy?: number
 }
 
 export type LogEntry = {
@@ -553,6 +587,20 @@ type PendingShape =
       again: boolean
     }
   | {
+      kind: 'etherealReturn'
+      owner: PlayerId
+      queue: { controller: PlayerId; instanceId: string; attached: boolean }[]
+    }
+  | { kind: 'tax'; owner: PlayerId; sourcePlayer: PlayerId; sourceSlot: number }
+  | { kind: 'stoneCure'; owner: PlayerId }
+  | {
+      kind: 'arrowVolley'
+      owner: PlayerId
+      instanceId: string
+      queue: { owner: PlayerId; instanceId: string }[]
+    }
+  | { kind: 'wisdomEnergy'; owner: PlayerId; slot: number; remaining: number }
+  | {
       kind: 'goldenDie'
       owner: PlayerId
       action: GameAction
@@ -781,7 +829,19 @@ export type GameAction =
   | { type: 'ENCHANT_STONE'; defId: string }
   | { type: 'STARBEAM_ENERGY'; target: TargetRef }
   | { type: 'CHARGED_SPLAT'; target: TargetRef }
+  | { type: 'PLAY_STRUCTURE'; handIndex: number; slot: number; fromDiscard?: boolean }
+  | { type: 'RETURN_ETHEREAL'; instanceId: string; slot: number; stance: Stance }
+  | { type: 'ETHEREAL_PLACE'; slot: number; stance: Stance }
+  | { type: 'TAX_GIVE'; instanceId: string }
+  | { type: 'TAX_DAMAGE'; target: TargetRef }
+  | { type: 'STONE_CURE'; instanceId: string }
+  | { type: 'STONE_KEEP' }
+  | { type: 'ARROW_SHOT'; target: TargetRef }
+  | { type: 'ARROW_SKIP' }
+  | { type: 'WISDOM_ENERGY'; target: TargetRef }
 
 export const FIELD_SIZE = 7
 export const STARTING_POINTS = 6
 export const STARTING_HAND = 4
+/** After the energy phase, discard down to this many cards. */
+export const HAND_SIZE_LIMIT = 7

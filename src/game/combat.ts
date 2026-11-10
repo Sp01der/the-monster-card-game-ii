@@ -1,4 +1,4 @@
-import { getCard, getMonster } from './catalog'
+import { getCard, getMonster, identityDefId } from './catalog'
 import { computeDamage, attackBonusFor, guardingGoldDefense, lensSuccessFaces, wearsLifestealBlade } from './damage'
 import {
   applyStatus,
@@ -7,7 +7,9 @@ import {
   discardMonster,
   grantEnergy,
   isDamageProtected,
+  isStone,
   log,
+  recordHeal,
   resolveTarget,
 } from './helpers'
 import type {
@@ -90,6 +92,7 @@ function healLifesteal(state: GameState, attacker: FieldMonster | null, dealt: n
   if (!stillThere) return
   const before = attacker.hp
   attacker.hp = Math.min(attacker.maxHp, attacker.hp + 10)
+  recordHeal(state, attacker.hp - before)
   if (attacker.hp === before) return
   log(state, `${getMonster(attacker.defId).name} heals ${attacker.hp - before} from Lifesteal Blade (now ${attacker.hp} HP).`)
 }
@@ -115,6 +118,15 @@ export function dealDamageToTarget(
   damageTypes?: DamageType[],
 ): TargetRef | null {
   lastDealtDamage = 0
+  if (attacker && identityDefId(attacker) === 'larrathere_knight') {
+    const types = damageTypes?.length ? damageTypes : [damageType]
+    if (types.includes('wind')) {
+      const owner = state.players.find((player) =>
+        player.field.some((monster) => monster?.instanceId === attacker?.instanceId),
+      )
+      base += Math.floor((owner?.healedLastTurn ?? 0) / 10) * 10
+    }
+  }
   if (!attacker && state.spellSourceInstanceId) {
     for (const player of state.players) {
       const source = player.field.find((monster) => monster?.instanceId === state.spellSourceInstanceId)
@@ -215,6 +227,12 @@ export function dealDamageToTarget(
     return target
   }
 
+  const hitTypes = damageTypes?.length ? damageTypes : [damageType]
+  if (isStone(resolved.monster) && !hitTypes.includes('blast')) {
+    log(state, `${getMonster(resolved.monster.defId).name} is Stone and takes no damage.`)
+    return null
+  }
+
   const amount = computeDamage({
     base,
     damageType,
@@ -244,7 +262,10 @@ export function dealDamageToTarget(
       log(state, `${def.name}'s Fortify fades.`)
     }
   }
-  const hitTypes = damageTypes?.length ? damageTypes : [damageType]
+  if (amount > 0 && isStone(resolved.monster) && hitTypes.includes('blast')) {
+    resolved.monster.statuses = resolved.monster.statuses.filter((status) => status.kind !== 'stone')
+    log(state, `The blast breaks the Stone on ${getMonster(resolved.monster.defId).name}.`)
+  }
   if (amount > 0 && hitTypes.includes('electric') && resolved.monster.defId === 'lightning_worm') {
     if (grantEnergy(state, resolved.monster, 1) > 0) {
       log(state, 'Lightning Worm gains 1 energy from the electric attack.')
@@ -272,7 +293,9 @@ export function healTarget(state: GameState, target: TargetRef, amount: number):
     return
   }
 
+  const before = resolved.monster.hp
   resolved.monster.hp = Math.min(resolved.monster.maxHp, resolved.monster.hp + amount)
+  recordHeal(state, resolved.monster.hp - before)
   log(
     state,
     `${getMonster(resolved.monster.defId).name} heals ${amount} (now ${resolved.monster.hp} HP).`,
@@ -365,7 +388,9 @@ function resolveOneEffect(
       )
     }
     case 'healSelf': {
+      const before = attacker.hp
       attacker.hp = Math.min(attacker.maxHp, attacker.hp + effect.amount)
+      recordHeal(state, attacker.hp - before)
       log(
         state,
         `${getMonster(attacker.defId).name} heals ${effect.amount} (now ${attacker.hp} HP).`,

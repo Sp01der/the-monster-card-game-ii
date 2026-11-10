@@ -1,6 +1,7 @@
 import { deathSpawnDefId, getCard, getMonster, identityDefId, isBoneling } from './catalog'
 import type {
   CardSnapshot,
+  EtherealEntry,
   FieldEquipment,
   FieldMonster,
   GameState,
@@ -9,6 +10,7 @@ import type {
   PendingInteraction,
   PlayerId,
   PlayerState,
+  Stance,
   StatusInstance,
   TargetRef,
 } from './types'
@@ -124,7 +126,13 @@ const NEGATIVE_STATUSES = new Set<StatusInstance['kind']>([
   'wet',
   'cling',
   'weakened',
+  'stone',
 ])
+
+export function isStone(monster: FieldMonster): boolean {
+  if (wearsSaphireRing(monster)) return false
+  return monster.statuses.some((status) => status.kind === 'stone')
+}
 
 export function isFrozen(monster: FieldMonster): boolean {
   if (wearsSaphireRing(monster)) return false
@@ -163,7 +171,31 @@ export function hasKeystone(monster: FieldMonster): boolean {
 
 /** A Colossus with no Keystone cannot gain energy from any source. */
 export function canReceiveEnergy(monster: FieldMonster): boolean {
+  if (isStone(monster)) return false
   return identityDefId(monster) !== 'colossus' || hasKeystone(monster)
+}
+
+export function recordHeal(state: GameState, gained: number): void {
+  if (gained <= 0) return
+  const player = activePlayer(state)
+  player.healedThisTurn = (player.healedThisTurn ?? 0) + gained
+}
+
+export function countEtherealCards(state: GameState): number {
+  let count = 0
+  for (const player of state.players) {
+    for (const entry of player.ethereal ?? []) {
+      count += 1
+      if (entry.attachedMonster) count += 1
+    }
+  }
+  return count
+}
+
+/** A monster on the field or Ethereal still counts as in the match. */
+export function hasMonsterInMatch(player: PlayerState): boolean {
+  if (player.field.some((monster) => monster !== null)) return true
+  return (player.ethereal ?? []).some((entry) => entry.monster || entry.attachedMonster)
 }
 
 export function grantEnergy(state: GameState, monster: FieldMonster, amount: number): number {
@@ -249,6 +281,12 @@ export function applyStatus(
   sourcePlayer?: PlayerId,
 ): boolean {
   if (wearsSaphireRing(monster) && NEGATIVE_STATUSES.has(kind)) return false
+  if (kind === 'stone') {
+    if (!monster.statuses.some((status) => status.kind === 'stone')) {
+      monster.statuses.push({ kind, turns: 0, skipNextTick: false, sourcePlayer })
+    }
+    return true
+  }
   const added = turns * Math.max(1, stacks)
   // Cling is a maintained link, not a duration that adds.
   if (kind === 'cling') {
@@ -413,6 +451,46 @@ export function liftMonster(state: GameState, player: PlayerState, slot: number)
   }
   player.field[slot] = null
   return monster
+}
+
+export function becomeEthereal(
+  state: GameState,
+  player: PlayerState,
+  slot: number,
+  returnPlayer?: PlayerId,
+): FieldMonster | null {
+  const lifted = liftMonster(state, player, slot)
+  if (!lifted) return null
+  const entry: EtherealEntry = {
+    card: { instanceId: lifted.instanceId, defId: lifted.defId },
+    monster: lifted,
+    returnPlayer,
+  }
+  player.ethereal = [...(player.ethereal ?? []), entry]
+  log(state, `${getMonster(lifted.defId).name} becomes Ethereal.`)
+  return lifted
+}
+
+export function removeMonsterWithoutPoints(state: GameState, ownerId: PlayerId, monster: FieldMonster): void {
+  discardStoredMonster(state, ownerId, monster)
+}
+
+export function placeMonsterOnField(
+  state: GameState,
+  playerId: PlayerId,
+  slot: number,
+  monster: FieldMonster,
+  stance: Stance,
+): void {
+  monster.stance = stance
+  monster.ownsExtraSlot = false
+  state.players[playerId].field[slot] = monster
+  log(state, `${getMonster(monster.defId).name} returns to ${state.players[playerId].name}'s field.`)
+  if (isBoneling(monster.defId) && monster.stance === 'withdrawn') {
+    monster.hp = 0
+    log(state, `${getMonster(monster.defId).name} cannot withdraw and dies instead.`)
+    discardMonster(state, state.players[playerId], slot, 'slain')
+  }
 }
 
 export function liftEquipment(
@@ -593,8 +671,7 @@ export function checkLosses(state: GameState): void {
         state.pending.queue.some((queued) => queued.owner === player.id))
     ) continue
     if (!player.hasFinishedFirstTurn) continue
-    const hasMonster = player.field.some((m) => m !== null)
-    if (!hasMonster) {
+    if (!hasMonsterInMatch(player)) {
       state.winner = otherPlayer(player.id)
       log(
         state,
