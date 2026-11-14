@@ -4,9 +4,12 @@ import {
   CATALOG,
   cardMatchesSearchType,
   getCard,
+  MAX_PLAYERS,
+  MIN_PLAYERS,
   STARTING_HAND,
   type CardSearchType,
   type DeckSetup,
+  type PlayerId,
 } from '../game'
 import {
   DEFAULT_STARTER_IDS,
@@ -24,10 +27,9 @@ import {
 } from './deckStorage'
 
 export type MatchStart = {
-  player0: DeckSetup
-  player1: DeckSetup
-  /** Seat controlled by the computer, or null for hotseat. */
-  computerPlayer: 0 | 1 | null
+  decks: DeckSetup[]
+  /** Seats controlled by the computer. Empty for full hotseat. */
+  computerPlayers: PlayerId[]
 }
 
 type Props = {
@@ -145,9 +147,10 @@ function fromSaved(deck: StoredDeck, playerName: string): Draft {
   }
 }
 
-function initialDraft(store: DeckStore, player: 0 | 1, playerName: string): Draft {
-  const fallback = starterById(DEFAULT_STARTER_IDS[player]) ?? STARTERS[0]
-  const lastId = store.getLastUsed(player)
+function initialDraft(store: DeckStore, player: number, playerName: string): Draft {
+  const starterIndex = player < DEFAULT_STARTER_IDS.length ? player : player % DEFAULT_STARTER_IDS.length
+  const fallback = starterById(DEFAULT_STARTER_IDS[starterIndex]!) ?? STARTERS[0]!
+  const lastId = player <= 1 ? store.getLastUsed(player as 0 | 1) : null
   if (lastId) {
     const saved = store.list().find((deck) => deck.id === lastId)
     if (saved) return fromSaved(saved, playerName)
@@ -157,14 +160,20 @@ function initialDraft(store: DeckStore, player: 0 | 1, playerName: string): Draf
   return fromStarter(fallback, playerName)
 }
 
+function blankComputerFlags(count: number): boolean[] {
+  return Array.from({ length: count }, () => false)
+}
+
 export function DeckBuilder({ onStart }: Props) {
   const [store] = useState(() => createDeckStore(browserStorage()))
   const [savedDecks, setSavedDecks] = useState<StoredDeck[]>(() => store.list())
-  const [player, setPlayer] = useState<0 | 1>(0)
-  const [drafts, setDrafts] = useState<[Draft, Draft]>(() => [
+  const [playerCount, setPlayerCount] = useState(2)
+  const [player, setPlayer] = useState(0)
+  const [drafts, setDrafts] = useState<Draft[]>(() => [
     initialDraft(store, 0, 'Player 1'),
     initialDraft(store, 1, 'Player 2'),
   ])
+  const [computerFlags, setComputerFlags] = useState<boolean[]>(() => blankComputerFlags(2))
   const [vsComputer, setVsComputer] = useState(false)
   const [computerGoesFirst, setComputerGoesFirst] = useState(false)
   const [query, setQuery] = useState('')
@@ -173,9 +182,11 @@ export function DeckBuilder({ onStart }: Props) {
   const [loadOpen, setLoadOpen] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
 
-  const computerSeat: 0 | 1 | null = vsComputer ? (computerGoesFirst ? 0 : 1) : null
+  const isTwoSeat = playerCount === 2
+  const computerSeat: 0 | 1 | null =
+    isTwoSeat && vsComputer ? (computerGoesFirst ? 0 : 1) : null
 
-  const draft = drafts[player]
+  const draft = drafts[player]!
 
   const visibleIds = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -195,17 +206,16 @@ export function DeckBuilder({ onStart }: Props) {
   )
 
   const error = useMemo(() => {
-    for (const index of [0, 1] as const) {
-      const current = drafts[index]
-      const label =
-        vsComputer && index === computerSeat
-          ? 'Computer'
-          : vsComputer
-            ? 'You'
-            : `Player ${index + 1}`
-      if (!vsComputer || index !== computerSeat) {
-        if (!current.name.trim()) return `${label} needs a name.`
-      }
+    for (let index = 0; index < drafts.length; index++) {
+      const current = drafts[index]!
+      const isComputer =
+        (isTwoSeat && computerSeat === index) || (!isTwoSeat && computerFlags[index])
+      const label = isComputer
+        ? `Computer ${index + 1}`
+        : isTwoSeat && vsComputer
+          ? 'You'
+          : current.name.trim() || `Player ${index + 1}`
+      if (!isComputer && !current.name.trim()) return `${label} needs a name.`
       if (totalCards(current) < STARTING_HAND) {
         return `${label} needs at least ${STARTING_HAND} cards.`
       }
@@ -216,20 +226,48 @@ export function DeckBuilder({ onStart }: Props) {
         return `${label} must choose a monster to put on top.`
       }
     }
+    if (!isTwoSeat) {
+      const humans = computerFlags.filter((flag) => !flag).length
+      if (humans === 0) return 'At least one seat must be a human player.'
+    }
     return null
-  }, [computerSeat, drafts, vsComputer])
+  }, [computerFlags, computerSeat, drafts, isTwoSeat, vsComputer])
+
+  function setSeatCount(count: number) {
+    const next = Math.min(MAX_PLAYERS, Math.max(MIN_PLAYERS, count))
+    setPlayerCount(next)
+    setPlayer((prev) => Math.min(prev, next - 1))
+    setDrafts((prev) => {
+      const copy = prev.slice(0, next)
+      while (copy.length < next) {
+        const index = copy.length
+        copy.push(initialDraft(store, index, `Player ${index + 1}`))
+      }
+      return copy
+    })
+    setComputerFlags((prev) => {
+      const copy = prev.slice(0, next)
+      while (copy.length < next) copy.push(false)
+      return copy
+    })
+    if (next !== 2) {
+      setVsComputer(false)
+      setComputerGoesFirst(false)
+    }
+    setStatus(null)
+  }
 
   function updateDraft(next: Draft | ((current: Draft) => Draft)) {
     setDrafts((prev) => {
-      const copy: [Draft, Draft] = [prev[0], prev[1]]
-      copy[player] = typeof next === 'function' ? next(prev[player]) : next
+      const copy = [...prev]
+      copy[player] = typeof next === 'function' ? next(prev[player]!) : next
       return copy
     })
     setStatus(null)
   }
 
-  function remember(index: 0 | 1, source: DeckSource) {
-    if (source) store.setLastUsed(index, source.id)
+  function remember(index: number, source: DeckSource) {
+    if (source && index <= 1) store.setLastUsed(index as 0 | 1, source.id)
   }
 
   function loadStarter(starter: StarterDeck) {
@@ -292,11 +330,12 @@ export function DeckBuilder({ onStart }: Props) {
   }
 
   function copyToOther() {
-    const other: 0 | 1 = player === 0 ? 1 : 0
+    if (drafts.length < 2) return
+    const other = player === 0 ? 1 : 0
     setDrafts((prev) => {
-      const copy: [Draft, Draft] = [prev[0], prev[1]]
+      const copy = [...prev]
       copy[other] = {
-        ...prev[other],
+        ...prev[other]!,
         counts: { ...draft.counts },
         topMonsterId: draft.topMonsterId,
         deckName: draft.deckName,
@@ -304,27 +343,32 @@ export function DeckBuilder({ onStart }: Props) {
       }
       return copy
     })
-    setStatus(`Copied to ${drafts[other].name.trim() || `Player ${other + 1}`}.`)
+    setStatus(`Copied to ${drafts[other]!.name.trim() || `Player ${other + 1}`}.`)
   }
 
   function startMatch() {
-    remember(0, drafts[0].source)
-    remember(1, drafts[1].source)
-    const setups: [DeckSetup, DeckSetup] = [
-      draftToSetup({
-        ...drafts[0],
-        name: vsComputer && computerSeat === 0 ? 'Computer' : drafts[0].name,
-      }),
-      draftToSetup({
-        ...drafts[1],
-        name: vsComputer && computerSeat === 1 ? 'Computer' : drafts[1].name,
-      }),
-    ]
-    onStart({
-      player0: setups[0],
-      player1: setups[1],
-      computerPlayer: computerSeat,
+    drafts.forEach((current, index) => remember(index, current.source))
+    const setups = drafts.map((current, index) => {
+      const isComputer =
+        (isTwoSeat && computerSeat === index) || (!isTwoSeat && computerFlags[index])
+      return draftToSetup({
+        ...current,
+        name: isComputer
+          ? drafts.length === 2
+            ? 'Computer'
+            : `Computer ${index + 1}`
+          : current.name,
+      })
     })
+    const computerPlayers: PlayerId[] = []
+    if (isTwoSeat) {
+      if (computerSeat !== null) computerPlayers.push(computerSeat)
+    } else {
+      computerFlags.forEach((flag, index) => {
+        if (flag) computerPlayers.push(index as PlayerId)
+      })
+    }
+    onStart({ decks: setups, computerPlayers })
   }
 
   const sourceLabel =
@@ -340,62 +384,96 @@ export function DeckBuilder({ onStart }: Props) {
         <h1>The Monster Card Game II</h1>
         <p>
           Build a deck, save it in this browser, pick the top monster, then play hotseat or against
-          the computer.
+          the computer. Free-for-all supports up to five players.
         </p>
       </header>
 
       <div className="match-mode">
         <label className="mode-check">
-          <input
-            type="checkbox"
-            checked={vsComputer}
-            onChange={(e) => {
-              const on = e.target.checked
-              setVsComputer(on)
-              if (on) {
-                const seat: 0 | 1 = computerGoesFirst ? 0 : 1
-                setPlayer(seat === 0 ? 1 : 0)
-                setDrafts((prev) => {
-                  const copy: [Draft, Draft] = [prev[0], prev[1]]
-                  copy[seat] = { ...copy[seat], name: 'Computer' }
-                  return copy
-                })
-              }
-            }}
-          />
-          Play against the computer
+          Players
+          <select
+            value={playerCount}
+            onChange={(e) => setSeatCount(Number(e.target.value))}
+            aria-label="Number of players"
+          >
+            {Array.from({ length: MAX_PLAYERS - MIN_PLAYERS + 1 }, (_, i) => MIN_PLAYERS + i).map(
+              (count) => (
+                <option key={count} value={count}>
+                  {count}
+                </option>
+              ),
+            )}
+          </select>
         </label>
-        {vsComputer && (
-          <label className="mode-check">
-            <input
-              type="checkbox"
-              checked={computerGoesFirst}
-              onChange={(e) => {
-                const first = e.target.checked
-                setComputerGoesFirst(first)
-                setPlayer(first ? 1 : 0)
-                setDrafts((prev) => {
-                  const copy: [Draft, Draft] = [
-                    { ...prev[0], name: first ? 'Computer' : prev[0].name === 'Computer' ? 'Player 1' : prev[0].name },
-                    { ...prev[1], name: first ? (prev[1].name === 'Computer' ? 'Player 2' : prev[1].name) : 'Computer' },
-                  ]
-                  return copy
-                })
-              }}
-            />
-            Computer goes first
-          </label>
+        {isTwoSeat && (
+          <>
+            <label className="mode-check">
+              <input
+                type="checkbox"
+                checked={vsComputer}
+                onChange={(e) => {
+                  const on = e.target.checked
+                  setVsComputer(on)
+                  if (on) {
+                    const seat: 0 | 1 = computerGoesFirst ? 0 : 1
+                    setPlayer(seat === 0 ? 1 : 0)
+                    setDrafts((prev) => {
+                      const copy = [...prev]
+                      copy[seat] = { ...copy[seat]!, name: 'Computer' }
+                      return copy
+                    })
+                  }
+                }}
+              />
+              Play against the computer
+            </label>
+            {vsComputer && (
+              <label className="mode-check">
+                <input
+                  type="checkbox"
+                  checked={computerGoesFirst}
+                  onChange={(e) => {
+                    const first = e.target.checked
+                    setComputerGoesFirst(first)
+                    setPlayer(first ? 1 : 0)
+                    setDrafts((prev) => [
+                      {
+                        ...prev[0]!,
+                        name: first
+                          ? 'Computer'
+                          : prev[0]!.name === 'Computer'
+                            ? 'Player 1'
+                            : prev[0]!.name,
+                      },
+                      {
+                        ...prev[1]!,
+                        name: first
+                          ? prev[1]!.name === 'Computer'
+                            ? 'Player 2'
+                            : prev[1]!.name
+                          : 'Computer',
+                      },
+                    ])
+                  }}
+                />
+                Computer goes first
+              </label>
+            )}
+          </>
         )}
       </div>
 
       <div className="player-tabs" role="tablist">
-        {([0, 1] as const).map((index) => {
-          const label =
-            vsComputer && index === computerSeat
+        {drafts.map((seatDraft, index) => {
+          const isComputer =
+            (isTwoSeat && computerSeat === index) || (!isTwoSeat && computerFlags[index])
+          const label = isComputer
+            ? isTwoSeat
               ? 'Computer'
-              : vsComputer
-                ? 'You'
-                : drafts[index].name.trim() || `Player ${index + 1}`
+              : `Computer ${index + 1}`
+            : isTwoSeat && vsComputer
+              ? 'You'
+              : seatDraft.name.trim() || `Player ${index + 1}`
           return (
             <button
               key={index}
@@ -410,11 +488,39 @@ export function DeckBuilder({ onStart }: Props) {
               }}
             >
               <span>{label}</span>
-              <span className="muted">{totalCards(drafts[index])} cards</span>
+              <span className="muted">{totalCards(seatDraft)} cards</span>
             </button>
           )
         })}
       </div>
+      {!isTwoSeat && (
+        <label className="mode-check">
+          <input
+            type="checkbox"
+            checked={Boolean(computerFlags[player])}
+            onChange={(e) => {
+              const on = e.target.checked
+              setComputerFlags((prev) => {
+                const copy = [...prev]
+                copy[player] = on
+                return copy
+              })
+              if (on) {
+                updateDraft((current) => ({
+                  ...current,
+                  name: `Computer ${player + 1}`,
+                }))
+              } else if (draft.name.startsWith('Computer')) {
+                updateDraft((current) => ({
+                  ...current,
+                  name: `Player ${player + 1}`,
+                }))
+              }
+            }}
+          />
+          This seat is a computer
+        </label>
+      )}
 
       <div className="builder">
         <section className="catalog-panel">

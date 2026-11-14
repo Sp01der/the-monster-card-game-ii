@@ -1,6 +1,6 @@
 import { getMonster, monsterAbilities } from '../catalog'
 import { computeDamage } from '../damage'
-import { otherPlayer } from '../helpers'
+import { isLivingPlayer, isTwoPlayer, livingOpponents, otherPlayer } from '../helpers'
 import type {
   AbilityDef,
   AbilityEffect,
@@ -49,8 +49,10 @@ function abilityExpectedBase(ability: AbilityDef): {
 function readyDamage(state: GameState, attackerOwner: PlayerId, attacker: FieldMonster): number {
   const abilities = monsterAbilities(attacker)
   let best = 0
-  const foe = state.players[otherPlayer(attackerOwner)]
-  const targets = foe.field.filter((m): m is FieldMonster => Boolean(m))
+  const foes = isTwoPlayer(state)
+    ? [state.players[otherPlayer(attackerOwner)]!]
+    : livingOpponents(state, attackerOwner)
+  const targets = foes.flatMap((foe) => foe.field.filter((m): m is FieldMonster => Boolean(m)))
   if (targets.length === 0) return 0
 
   for (const ability of abilities) {
@@ -106,8 +108,20 @@ function sideScore(state: GameState, player: PlayerState, seat: PlayerId): numbe
 export function evaluate(state: GameState, seat: PlayerId): number {
   if (state.winner === seat) return 1_000_000
   if (state.winner !== null) return -1_000_000
+  if (state.players[seat] && !isLivingPlayer(state.players[seat]!)) return -1_000_000
 
-  const me = state.players[seat]
-  const foe = state.players[otherPlayer(seat)]
-  return sideScore(state, me, seat) - sideScore(state, foe, otherPlayer(seat))
+  const me = state.players[seat]!
+  if (isTwoPlayer(state)) {
+    const foe = state.players[otherPlayer(seat)]!
+    return sideScore(state, me, seat) - sideScore(state, foe, otherPlayer(seat))
+  }
+
+  const foes = livingOpponents(state, seat)
+  if (foes.length === 0) return 1_000_000
+  let bestFoe = -Infinity
+  for (const foe of foes) {
+    const score = sideScore(state, foe, foe.id)
+    if (score > bestFoe) bestFoe = score
+  }
+  return sideScore(state, me, seat) - bestFoe
 }

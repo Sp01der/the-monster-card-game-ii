@@ -8,8 +8,8 @@ import './App.css'
 
 export default function App() {
   const [game, setGame] = useState<GameState | null>(null)
-  const [computerPlayer, setComputerPlayer] = useState<PlayerId | null>(null)
-  const [decks, setDecks] = useState<[DeckSetup, DeckSetup] | null>(null)
+  const [computerPlayers, setComputerPlayers] = useState<PlayerId[]>([])
+  const [decks, setDecks] = useState<DeckSetup[] | null>(null)
 
   const setGameSafe = useCallback(
     (next: GameState | ((current: GameState | null) => GameState | null)) => {
@@ -18,17 +18,26 @@ export default function App() {
     [],
   )
 
-  const thinking = useComputerOpponent(game, setGameSafe, computerPlayer, decks)
+  const thinking = useComputerOpponent(
+    game,
+    setGameSafe,
+    computerPlayers.length > 0 ? computerPlayers : null,
+    decks,
+  )
 
   function start(match: MatchStart) {
-    setComputerPlayer(match.computerPlayer)
-    setDecks([match.player0, match.player1])
-    setGame(createGame(match.player0, match.player1))
+    setComputerPlayers(match.computerPlayers)
+    setDecks(match.decks)
+    setGame(
+      match.decks.length === 2
+        ? createGame(match.decks[0]!, match.decks[1]!)
+        : createGame(match.decks),
+    )
   }
 
   function newGame() {
     setGame(null)
-    setComputerPlayer(null)
+    setComputerPlayers([])
     setDecks(null)
   }
 
@@ -39,7 +48,7 @@ export default function App() {
           state={game}
           onChange={setGame}
           onNewGame={newGame}
-          computerPlayer={computerPlayer}
+          computerPlayers={computerPlayers}
           thinking={thinking}
         />
       ) : (

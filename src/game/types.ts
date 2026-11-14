@@ -1,4 +1,7 @@
-export type PlayerId = 0 | 1
+export type PlayerId = 0 | 1 | 2 | 3 | 4
+
+export const MIN_PLAYERS = 2
+export const MAX_PLAYERS = 5
 
 export type DamageType =
   | 'fire'
@@ -284,6 +287,11 @@ export type PlayerState = {
   hasFinishedFirstTurn: boolean
   /** True until the player has completed their first turn. */
   isFirstTurn: boolean
+  /**
+   * Free-for-all only. Set when this seat is eliminated.
+   * Absent in two-player games, which end as soon as either player loses.
+   */
+  eliminated?: boolean
   /** Number of upcoming energy phases this player must skip. */
   skipEnergyPhases: number
   /** Player-wide Ice Mirror reflections waiting to trigger. */
@@ -319,7 +327,7 @@ export type LogEntry = {
 }
 
 export type GameState = {
-  players: [PlayerState, PlayerState]
+  players: PlayerState[]
   activePlayer: PlayerId
   phase: TurnPhase
   /** Whether the draw step has been completed or skipped. */
@@ -354,10 +362,10 @@ export type GameState = {
   awaitingHandoff: boolean
   /**
    * Each player may keep or redraw their opening hand once, before any other choice.
-   * Absent after both have decided, and absent when the opening is skipped.
+   * Absent after all have decided, and absent when the opening is skipped.
    */
   openingMulligan?: {
-    decided: [boolean, boolean]
+    decided: boolean[]
     /** The active player has redrawn and is looking at the new hand. */
     revealed: boolean
   }
@@ -493,18 +501,33 @@ type PendingShape =
       remaining: number
       turns: number
       chosenInstanceIds: string[]
+      /** Two-player frost breath. Prefer discardPlayers when set. */
       discardPlayer?: PlayerId
+      /** Each listed player discards one card after freezes finish. */
+      discardPlayers?: PlayerId[]
+    }
+  | {
+      kind: 'chooseOpponent'
+      owner: PlayerId
+      purpose: 'trickery' | 'spy' | 'sunkenPlunder' | 'tax'
+      eligible: PlayerId[]
+      /** Tax needs the collector's field slot. */
+      sourceSlot?: number
     }
   | {
       kind: 'handDiscard'
       player: PlayerId
       remaining: number
-      /** After this player finishes, each listed player discards one card. */
+      /** After this player finishes, each listed player discards. */
       thenPlayers?: PlayerId[]
+      /** How many each thenPlayer discards. Defaults to 1 (Famine). Grief uses the destroyed count. */
+      thenRemaining?: number
     }
   | {
       kind: 'spy'
       owner: PlayerId
+      /** Whose hand is being viewed. Absent in two-player games (always the other seat). */
+      targetPlayer?: PlayerId
     }
   | {
       kind: 'griefDestroy'
@@ -548,6 +571,8 @@ type PendingShape =
       monstersOnly?: boolean
       /** Spell Casting plays one effect. */
       effectsOnly?: boolean
+      /** Spell Casting: prefer selecting the effect just fetched from the deck. */
+      preferredInstanceId?: string
       /** Uprising: energy granted to each monster as it enters. */
       grantEnergy?: number
     }
@@ -618,6 +643,10 @@ type PendingShape =
       kind: 'mirrorOffer'
       owner: PlayerId
       defId: string
+      /** Seat deciding. Absent means the sole other player (two-player path). */
+      offerTo?: PlayerId
+      /** Opponents still waiting for their offer after this one. */
+      remainingOffers?: PlayerId[]
     }
   | {
       kind: 'mirrorContinue'
@@ -812,6 +841,7 @@ export type GameAction =
   | { type: 'MIRROR_AGREE' }
   | { type: 'MIRROR_DECLINE' }
   | { type: 'MIRROR_SKIP' }
+  | { type: 'CHOOSE_OPPONENT'; player: PlayerId }
   | { type: 'SHAPESHIFT_PICK'; defId: string }
   | { type: 'REWIND_USE'; rewindInstanceId: string }
   | { type: 'REWIND_DISCARD'; instanceId: string }

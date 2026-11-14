@@ -69,6 +69,9 @@ import {
   releaseProtection,
   removeResilience,
   restoreSnapshot,
+  isTwoPlayer,
+  livingOpponents,
+  nextLivingPlayerId,
   otherPlayer,
   placeMonsterOnField,
   randomRunestone,
@@ -133,14 +136,19 @@ function defIdInMatch(state: GameState, instanceId: string): string | undefined 
   return undefined
 }
 
+function opponentSeatIds(state: GameState, id: PlayerId): PlayerId[] {
+  if (isTwoPlayer(state)) return [otherPlayer(id)]
+  return livingOpponents(state, id).map((player) => player.id)
+}
+
 function beginMirrorCopy(
   state: GameState,
-  actorId: 0 | 1,
-  pactOwner: 0 | 1,
+  actorId: PlayerId,
+  pactOwner: PlayerId,
   defId: string,
   role: 'opponent' | 'self',
 ): void {
-  const actor = state.players[actorId]
+  const actor = state.players[actorId]!
   const card = makeCard(state, defId)
   actor.hand.push(card)
   state.pending = {
@@ -156,6 +164,72 @@ function beginMirrorCopy(
     copiedDefId: defId,
   }
   log(state, `${actor.name} may play a copy of ${getCard(defId).name}.`)
+}
+
+function beginTrickeryAgainst(state: GameState, ownerId: PlayerId, opponentId: PlayerId): void {
+  const opponent = state.players[opponentId]!
+  if (opponent.hand.length === 0) return
+  const index = Math.floor(state.random() * opponent.hand.length)
+  const [card] = opponent.hand.splice(index, 1)
+  if (!card) return
+  state.pending = { kind: 'trickery', owner: ownerId, opponent: opponentId, card }
+}
+
+function beginSpyAgainst(state: GameState, ownerId: PlayerId, opponentId: PlayerId): void {
+  state.pending = {
+    kind: 'spy',
+    owner: ownerId,
+    ...(isTwoPlayer(state) ? {} : { targetPlayer: opponentId }),
+  }
+}
+
+function beginSunkenPlunderAgainst(state: GameState, ownerId: PlayerId, pileOwner: PlayerId): void {
+  state.pending = { kind: 'discardPick', owner: ownerId, pileOwner }
+}
+
+function beginTaxAgainst(
+  state: GameState,
+  collectorId: PlayerId,
+  opponentId: PlayerId,
+  sourceSlot: number,
+): void {
+  const opponent = state.players[opponentId]!
+  const collector = state.players[collectorId]!
+  const attacker = collector.field[sourceSlot]
+  if (!attacker) return
+  if (opponent.hand.length === 0) {
+    attacker.gold = (attacker.gold ?? 0) + 1
+    log(state, `${getMonster(attacker.defId).name} gains 1 gold.`)
+    return
+  }
+  state.pending = {
+    kind: 'tax',
+    owner: opponentId,
+    sourcePlayer: collectorId,
+    sourceSlot,
+  }
+  log(
+    state,
+    `${opponent.name} gives a card from hand, or chooses a card they control to take 50 damage.`,
+  )
+}
+
+function beginMirrorOffer(
+  state: GameState,
+  ownerId: PlayerId,
+  defId: string,
+  offerTo: PlayerId,
+  remainingOffers: PlayerId[],
+): void {
+  state.pending = {
+    kind: 'mirrorOffer',
+    owner: ownerId,
+    defId,
+    ...(isTwoPlayer(state)
+      ? {}
+      : { offerTo, remainingOffers }),
+  }
+  log(state, `${state.players[offerTo]!.name} may copy ${getCard(defId).name}.`)
 }
 
 function destroyPermanently(state: GameState, player: PlayerState, card: HandCard): void {
@@ -175,19 +249,21 @@ function beginForcedDiscard(
   playerId: PlayerId,
   remaining: number,
   thenPlayers: PlayerId[] = [],
+  thenRemaining = 1,
 ): void {
-  const count = Math.min(remaining, state.players[playerId].hand.length)
+  const count = Math.min(remaining, state.players[playerId]!.hand.length)
   if (count > 0) {
     state.pending = {
       kind: 'handDiscard',
       player: playerId,
       remaining: count,
       thenPlayers: thenPlayers.length > 0 ? thenPlayers : undefined,
+      thenRemaining: thenPlayers.length > 0 ? thenRemaining : undefined,
     }
     return
   }
   if (thenPlayers.length > 0) {
-    beginForcedDiscard(state, thenPlayers[0], 1, thenPlayers.slice(1))
+    beginForcedDiscard(state, thenPlayers[0]!, thenRemaining, thenPlayers.slice(1), thenRemaining)
     return
   }
   if (state.pending?.kind === 'handDiscard') clearPending(state)
@@ -596,7 +672,9 @@ function passTurn(state: GameState): void {
     return
   }
 
-  const nextId = otherPlayer(state.activePlayer)
+  const nextId = isTwoPlayer(state)
+    ? otherPlayer(state.activePlayer)
+    : nextLivingPlayerId(state, state.activePlayer)
   state.activePlayer = nextId
   state.playedCardThisTurn = false
   state.cardsPlayedThisTurn = 0
@@ -799,11 +877,21 @@ function resolveSpecialAbility(
       } else log(state, 'Spark failed.')
       break
     case 'trickery': {
-      const opponent = state.players[otherPlayer(player.id)]
-      if (opponent.hand.length === 0) break
-      const index = Math.floor(state.random() * opponent.hand.length)
-      const [card] = opponent.hand.splice(index, 1)
-      state.pending = { kind: 'trickery', owner: player.id, opponent: opponent.id, card }
+      const eligible = opponentSeatIds(state, player.id).filter(
+        (id) => state.players[id]!.hand.length > 0,
+      )
+      if (eligible.length === 0) break
+      if (eligible.length === 1) {
+        beginTrickeryAgainst(state, player.id, eligible[0]!)
+      } else {
+        state.pending = {
+          kind: 'chooseOpponent',
+          owner: player.id,
+          purpose: 'trickery',
+          eligible,
+        }
+        log(state, 'Choose whose hand to take a card from.')
+      }
       break
     }
     case 'bigSplat': {
@@ -961,13 +1049,24 @@ function resolveSpecialAbility(
     case 'lostTreasure':
       state.pending = { kind: 'discardPick', owner: player.id, pileOwner: player.id }
       break
-    case 'sunkenPlunder':
-      state.pending = {
-        kind: 'discardPick',
-        owner: player.id,
-        pileOwner: otherPlayer(player.id),
+    case 'sunkenPlunder': {
+      const eligible = opponentSeatIds(state, player.id).filter(
+        (id) => state.players[id]!.discard.length > 0,
+      )
+      if (eligible.length === 0) break
+      if (eligible.length === 1) {
+        beginSunkenPlunderAgainst(state, player.id, eligible[0]!)
+      } else {
+        state.pending = {
+          kind: 'chooseOpponent',
+          owner: player.id,
+          purpose: 'sunkenPlunder',
+          eligible,
+        }
+        log(state, "Choose whose discard to take a card from.")
       }
       break
+    }
     case 'tentacleAttack':
       state.pending = {
         kind: 'multiHit',
@@ -1015,9 +1114,12 @@ function resolveSpecialAbility(
       break
     case 'chillingScreech': {
       const count = player.field.filter((monster) => monster && dealsIceDamage(monster.defId)).length
-      const legalTargets = state.players[otherPlayer(player.id)].field.filter(
-        (monster) => monster?.stance === 'active',
-      ).length || state.players[otherPlayer(player.id)].field.filter(Boolean).length
+      let legalTargets = 0
+      for (const oppId of opponentSeatIds(state, player.id)) {
+        const field = state.players[oppId]!.field
+        const active = field.filter((monster) => monster?.stance === 'active').length
+        legalTargets += active > 0 ? active : field.filter(Boolean).length
+      }
       const remaining = Math.min(count, legalTargets)
       if (remaining > 0) {
         state.pending = {
@@ -1041,9 +1143,11 @@ function resolveSpecialAbility(
       log(state, 'Every Frozen monster remains Frozen for one additional turn.')
       break
     case 'skipOpponentEnergy': {
-      const opponent = state.players[otherPlayer(player.id)]
-      opponent.skipEnergyPhases += 1
-      log(state, `${opponent.name} will skip their next energy phase.`)
+      for (const oppId of opponentSeatIds(state, player.id)) {
+        const opponent = state.players[oppId]!
+        opponent.skipEnergyPhases += 1
+        log(state, `${opponent.name} will skip their next energy phase.`)
+      }
       break
     }
     case 'frostbite':
@@ -1120,7 +1224,10 @@ function resolveSpecialAbility(
         chosenInstanceIds: [],
       }
       break
-    case 'frostBreath':
+    case 'frostBreath': {
+      const discardPlayers = opponentSeatIds(state, player.id).filter(
+        (id) => state.players[id]!.hand.length > 0,
+      )
       state.pending = {
         kind: 'freezeTargets',
         sourcePlayer: player.id,
@@ -1128,9 +1235,12 @@ function resolveSpecialAbility(
         remaining: 2,
         turns: 2,
         chosenInstanceIds: [],
-        discardPlayer: otherPlayer(player.id),
+        ...(isTwoPlayer(state)
+          ? { discardPlayer: otherPlayer(player.id) }
+          : { discardPlayers }),
       }
       break
+    }
     case 'gleam': {
       if (target) {
         healTarget(state, target, 10)
@@ -1278,32 +1388,53 @@ function resolveSpecialAbility(
       resolveRocket(state, attacker, target, requiredEnergy)
       break
     case 'chaosFireworks': {
-      const opponent = state.players[otherPlayer(player.id)]
       for (let i = 0; i < 3; i++) {
-        const enemies = opponent.field
-          .map((monster, enemySlot) => (monster ? enemySlot : -1))
-          .filter((enemySlot) => enemySlot >= 0)
+        const enemies: TargetRef[] = []
+        for (const oppId of opponentSeatIds(state, player.id)) {
+          const field = state.players[oppId]!.field
+          for (let enemySlot = 0; enemySlot < field.length; enemySlot++) {
+            if (field[enemySlot]) {
+              enemies.push({ kind: 'monster', player: oppId, slot: enemySlot })
+            }
+          }
+        }
         if (enemies.length === 0) break
-        const pick = enemies[Math.floor(state.random() * enemies.length)]
-        log(state, `Chaos of Fireworks rockets slot ${pick + 1}.`)
-        resolveRocket(
-          state,
-          attacker,
-          { kind: 'monster', player: opponent.id, slot: pick },
-          requiredEnergy,
-        )
+        const pick = enemies[Math.floor(state.random() * enemies.length)]!
+        log(state, `Chaos of Fireworks rockets slot ${pick.slot + 1}.`)
+        resolveRocket(state, attacker, pick, requiredEnergy)
       }
       break
     }
-    case 'pilfer':
+    case 'pilfer': {
       if (target) {
         dealDamageToTarget(state, attacker, target, 10, 'shadow', false, requiredEnergy)
       }
-      beginForcedDiscard(state, otherPlayer(player.id), 1)
+      const discarders = opponentSeatIds(state, player.id).filter(
+        (id) => state.players[id]!.hand.length > 0,
+      )
+      if (discarders.length > 0) {
+        beginForcedDiscard(state, discarders[0]!, 1, discarders.slice(1))
+      }
       break
-    case 'spy':
-      state.pending = { kind: 'spy', owner: player.id }
+    }
+    case 'spy': {
+      const eligible = opponentSeatIds(state, player.id).filter(
+        (id) => state.players[id]!.hand.length > 0,
+      )
+      if (eligible.length === 0) break
+      if (eligible.length === 1) {
+        beginSpyAgainst(state, player.id, eligible[0]!)
+      } else {
+        state.pending = {
+          kind: 'chooseOpponent',
+          owner: player.id,
+          purpose: 'spy',
+          eligible,
+        }
+        log(state, 'Choose whose hand to view.')
+      }
       break
+    }
     case 'griefBolt':
       state.pending = { kind: 'griefDestroy', owner: player.id, chosenInstanceIds: [] }
       break
@@ -1503,18 +1634,21 @@ function resolveSpecialAbility(
       }
       break
     case 'quake':
-      for (let oppSlot = 0; oppSlot < state.players[otherPlayer(player.id)].field.length; oppSlot++) {
-        const monster = state.players[otherPlayer(player.id)].field[oppSlot]
-        if (!monster) continue
-        dealDamageToTarget(
-          state,
-          attacker,
-          { kind: 'monster', player: otherPlayer(player.id), slot: oppSlot },
-          10,
-          'earth',
-          false,
-          requiredEnergy,
-        )
+      for (const oppId of opponentSeatIds(state, player.id)) {
+        const field = state.players[oppId]!.field
+        for (let oppSlot = 0; oppSlot < field.length; oppSlot++) {
+          const monster = field[oppSlot]
+          if (!monster) continue
+          dealDamageToTarget(
+            state,
+            attacker,
+            { kind: 'monster', player: oppId, slot: oppSlot },
+            10,
+            'earth',
+            false,
+            requiredEnergy,
+          )
+        }
       }
       break
     case 'openFourthFloor':
@@ -1731,8 +1865,10 @@ function resolveSpecialAbility(
     case 'growth': {
       const monster = targetMonster(state, target)
       if (!monster || !isPlant(identityDefId(monster)) || target?.player !== player.id) break
+      const before = monster.hp
       monster.maxHp += 20
       monster.hp += 20
+      recordHeal(state, monster.hp - before)
       log(
         state,
         `${getMonster(monster.defId).name} grows to ${monster.hp}/${monster.maxHp} HP.`,
@@ -1923,10 +2059,12 @@ function resolveSpecialAbility(
       log(state, 'Choose a sword, spear, shield, or Lifesteal Blade.')
       break
     case 'spellCasting': {
+      let preferredInstanceId: string | undefined
       const index = player.deck.findIndex((card) => getCard(card.defId).kind === 'effect')
       if (index >= 0) {
         const [found] = player.deck.splice(index, 1)
         player.hand.push(found)
+        preferredInstanceId = found.instanceId
         log(state, `${player.name} adds ${getCard(found.defId).name} to their hand.`)
       } else {
         log(state, `${player.name} finds no effect in their deck.`)
@@ -1939,6 +2077,7 @@ function resolveSpecialAbility(
         limit: 1,
         freePlay: true,
         effectsOnly: true,
+        preferredInstanceId,
         spellSourceInstanceId: attacker.instanceId,
       }
       log(state, 'You may play an effect for free.')
@@ -1995,9 +2134,11 @@ function resolveSpecialAbility(
       break
     }
     case 'silence': {
-      const opponent = state.players[otherPlayer(player.id)]
-      opponent.silenceNextTurn = true
-      log(state, `${opponent.name} may not play effects on their next turn.`)
+      for (const oppId of opponentSeatIds(state, player.id)) {
+        const opponent = state.players[oppId]!
+        opponent.silenceNextTurn = true
+        log(state, `${opponent.name} may not play effects on their next turn.`)
+      }
       break
     }
     case 'unrelentingArrows':
@@ -2012,14 +2153,21 @@ function resolveSpecialAbility(
       break
     }
     case 'tax': {
-      const opponent = state.players[otherPlayer(player.id)]
-      if (opponent.hand.length === 0) {
-        attacker.gold = (attacker.gold ?? 0) + 1
-        log(state, `${getMonster(attacker.defId).name} gains 1 gold.`)
-        break
+      // Choose one living opponent. Hitting every seat would be far stronger.
+      const eligible = opponentSeatIds(state, player.id)
+      if (eligible.length === 0) break
+      if (eligible.length === 1) {
+        beginTaxAgainst(state, player.id, eligible[0]!, slot)
+      } else {
+        state.pending = {
+          kind: 'chooseOpponent',
+          owner: player.id,
+          purpose: 'tax',
+          eligible,
+          sourceSlot: slot,
+        }
+        log(state, 'Choose which opponent to Tax.')
       }
-      state.pending = { kind: 'tax', owner: opponent.id, sourcePlayer: player.id, sourceSlot: slot }
-      log(state, `${opponent.name} gives a card from hand, or chooses a card they control to take 50 damage.`)
       break
     }
     case 'soar': {
@@ -2535,16 +2683,13 @@ function playEffect(
       break
     }
     case 'famine': {
-      const opponentId = otherPlayer(player.id)
+      const opponentsWithHand = opponentSeatIds(state, player.id).filter(
+        (id) => state.players[id]!.hand.length > 0,
+      )
       if (player.hand.length > 0) {
-        beginForcedDiscard(
-          state,
-          player.id,
-          1,
-          state.players[opponentId].hand.length > 0 ? [opponentId] : [],
-        )
-      } else {
-        beginForcedDiscard(state, opponentId, 1)
+        beginForcedDiscard(state, player.id, 1, opponentsWithHand)
+      } else if (opponentsWithHand.length > 0) {
+        beginForcedDiscard(state, opponentsWithHand[0]!, 1, opponentsWithHand.slice(1))
       }
       break
     }
@@ -2556,7 +2701,7 @@ function playEffect(
       player.points -= 1
       log(state, `${player.name} loses 1 point. Time bends.`)
       checkLosses(state)
-      if (state.winner === null) {
+      if (state.winner === null && !player.eliminated) {
         player.extraTurn = true
         log(state, `${player.name} will take another turn after this one.`)
       }
@@ -2720,17 +2865,30 @@ function finishOpeningLook(state: GameState): void {
   const choosing = state.activePlayer
   mulligan.decided[choosing] = true
   mulligan.revealed = false
-  const other = choosing === 0 ? 1 : 0
-  if (!mulligan.decided[other]) {
-    state.activePlayer = other
-    state.awaitingHandoff = true
-    log(state, `Pass the device to ${state.players[other].name}.`)
-    return
+  if (isTwoPlayer(state)) {
+    const other = choosing === 0 ? 1 : 0
+    if (!mulligan.decided[other]) {
+      state.activePlayer = other
+      state.awaitingHandoff = true
+      log(state, `Pass the device to ${state.players[other]!.name}.`)
+      return
+    }
+  } else {
+    const n = state.players.length
+    for (let step = 1; step < n; step++) {
+      const candidate = ((choosing + step) % n) as PlayerId
+      if (!mulligan.decided[candidate]) {
+        state.activePlayer = candidate
+        state.awaitingHandoff = true
+        log(state, `Pass the device to ${state.players[candidate]!.name}.`)
+        return
+      }
+    }
   }
   state.openingMulligan = undefined
   state.activePlayer = 0
   state.awaitingHandoff = true
-  log(state, `Pass the device to ${state.players[0].name}.`)
+  log(state, `Pass the device to ${state.players[0]!.name}.`)
 }
 
 function applyActionInner(state: GameState, action: GameAction): GameState {
@@ -2943,7 +3101,7 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
         equipment: gear,
       }
       for (const equipment of gear) {
-        if (equipment.defId === 'resilience') applyResilience(monster)
+        if (equipment.defId === 'resilience') applyResilience(next, monster)
       }
       actor.field[action.slot] = monster
       if (playPending?.grantEnergy) grantEnergy(next, monster, playPending.grantEnergy)
@@ -2984,7 +3142,7 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
         hp: def.maxHp,
         maxHp: def.maxHp,
       })
-      if (card.defId === 'resilience') applyResilience(monster)
+      if (card.defId === 'resilience') applyResilience(next, monster)
       if (cardPlayCounts(playPending, undefined, next.recursion?.replayingNow === true)) noteCardPlay(next)
       log(next, `${actor.name} attaches ${def.name} to ${getMonster(monster.defId).name}.`)
       resumePlayCardsAfter(next, playPending)
@@ -3333,9 +3491,12 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       pending.chosenInstanceIds.push(target.instanceId)
       pending.remaining -= 1
       if (pending.remaining <= 0) {
-        const discardPlayer = pending.discardPlayer
-        if (discardPlayer !== undefined && next.players[discardPlayer].hand.length > 0) {
-          next.pending = { kind: 'handDiscard', player: discardPlayer, remaining: 1 }
+        const discardPlayers =
+          pending.discardPlayers ??
+          (pending.discardPlayer !== undefined ? [pending.discardPlayer] : [])
+        const withHand = discardPlayers.filter((id) => next.players[id]!.hand.length > 0)
+        if (withHand.length > 0) {
+          beginForcedDiscard(next, withHand[0]!, 1, withHand.slice(1))
         } else {
           clearPending(next)
         }
@@ -3356,14 +3517,17 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       pending.remaining -= 1
       if (pending.remaining > 0 && discardPlayer.hand.length > 0) break
       const rest = pending.thenPlayers ?? []
-      if (rest.length > 0) beginForcedDiscard(next, rest[0], 1, rest.slice(1))
-      else clearPending(next)
+      const thenRemaining = pending.thenRemaining ?? 1
+      if (rest.length > 0) {
+        beginForcedDiscard(next, rest[0]!, thenRemaining, rest.slice(1), thenRemaining)
+      } else clearPending(next)
       break
     }
     case 'SPY_MARK': {
       const pending = next.pending
       if (!pending || pending.kind !== 'spy') break
-      const opponent = next.players[otherPlayer(pending.owner)]
+      const opponentId = pending.targetPlayer ?? otherPlayer(pending.owner)
+      const opponent = next.players[opponentId]!
       opponent.spyMarkInstanceId = action.instanceId
       log(next, `${player.name} marks a card in ${opponent.name}'s hand.`)
       clearPending(next)
@@ -3391,8 +3555,16 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       }
       for (const card of destroyed) destroyPermanently(next, owner, card)
       const count = destroyed.length
-      if (count > 0) beginForcedDiscard(next, otherPlayer(pending.owner), count)
-      else clearPending(next)
+      if (count > 0) {
+        const discarders = opponentSeatIds(next, pending.owner).filter(
+          (id) => next.players[id]!.hand.length > 0,
+        )
+        if (discarders.length > 0) {
+          beginForcedDiscard(next, discarders[0]!, count, discarders.slice(1), count)
+        } else {
+          clearPending(next)
+        }
+      } else clearPending(next)
       break
     }
     case 'TRANSMUTE_DESTROY': {
@@ -3811,21 +3983,64 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       if (!pending || pending.kind !== 'mirrorPick') break
       const defId = defIdInMatch(next, action.instanceId)
       if (!defId) break
-      next.pending = { kind: 'mirrorOffer', owner: pending.owner, defId }
-      log(next, `${next.players[otherPlayer(pending.owner)].name} may copy ${getCard(defId).name}.`)
+      const offers = opponentSeatIds(next, pending.owner)
+      if (offers.length === 0) {
+        clearPending(next)
+        break
+      }
+      beginMirrorOffer(next, pending.owner, defId, offers[0]!, offers.slice(1))
       break
     }
     case 'MIRROR_AGREE': {
       const pending = next.pending
       if (!pending || pending.kind !== 'mirrorOffer') break
-      beginMirrorCopy(next, otherPlayer(pending.owner), pending.owner, pending.defId, 'opponent')
+      const offerTo = pending.offerTo ?? otherPlayer(pending.owner)
+      const remaining = pending.remainingOffers ?? []
+      if (remaining.length > 0) {
+        // Queue further offers under the playCards mirrorContinue path via stack.
+        next.pendingStack.push({
+          kind: 'mirrorOffer',
+          owner: pending.owner,
+          defId: pending.defId,
+          offerTo: remaining[0],
+          remainingOffers: remaining.slice(1),
+        })
+      }
+      beginMirrorCopy(next, offerTo, pending.owner, pending.defId, 'opponent')
       break
     }
     case 'MIRROR_DECLINE': {
       const pending = next.pending
       if (!pending || pending.kind !== 'mirrorOffer') break
-      log(next, `${next.players[otherPlayer(pending.owner)].name} declines the pact.`)
-      clearPending(next)
+      const offerTo = pending.offerTo ?? otherPlayer(pending.owner)
+      log(next, `${next.players[offerTo]!.name} declines the pact.`)
+      const remaining = pending.remainingOffers ?? []
+      if (remaining.length > 0) {
+        beginMirrorOffer(next, pending.owner, pending.defId, remaining[0]!, remaining.slice(1))
+      } else {
+        clearPending(next)
+      }
+      break
+    }
+    case 'CHOOSE_OPPONENT': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'chooseOpponent') break
+      if (!pending.eligible.includes(action.player)) break
+      switch (pending.purpose) {
+        case 'trickery':
+          beginTrickeryAgainst(next, pending.owner, action.player)
+          break
+        case 'spy':
+          beginSpyAgainst(next, pending.owner, action.player)
+          break
+        case 'sunkenPlunder':
+          beginSunkenPlunderAgainst(next, pending.owner, action.player)
+          break
+        case 'tax':
+          if (pending.sourceSlot === undefined) break
+          beginTaxAgainst(next, pending.owner, action.player, pending.sourceSlot)
+          break
+      }
       break
     }
     case 'MIRROR_SKIP': {
@@ -4255,6 +4470,14 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       tagFreshPendings(next, pendingUidsAtStart, generation)
     }
     continueRecursion(next)
+  }
+  if (
+    next.winner === null &&
+    !isTwoPlayer(next) &&
+    next.players[next.activePlayer]?.eliminated &&
+    next.pending === null
+  ) {
+    passTurn(next)
   }
   const spellStillCarried = [next.pending, ...next.pendingStack].some((entry) => entry?.spellSourceInstanceId)
   if (!spellStillCarried) next.spellSourceInstanceId = undefined

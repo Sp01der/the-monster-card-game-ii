@@ -1,9 +1,19 @@
 import { getCard } from './catalog'
 import type { AbilityDef, FieldMonster, GameState, PlayerId, PlayerState, TargetRef } from './types'
-import { getPlayer, isDamageProtected, otherPlayer } from './helpers'
+import {
+  getPlayer,
+  isDamageProtected,
+  isLivingPlayer,
+  isTwoPlayer,
+  livingOpponents,
+  otherPlayer,
+} from './helpers'
 
-function opposingMonsters(state: GameState, attackerPlayer: PlayerId) {
-  const opp = getPlayer(state, otherPlayer(attackerPlayer))
+function opposingMonstersFor(
+  state: GameState,
+  opponentId: PlayerId,
+): { opp: PlayerState; monsters: { slot: number; monster: FieldMonster }[] } {
+  const opp = getPlayer(state, opponentId)
   const monsters: { slot: number; monster: FieldMonster }[] = []
   for (let i = 0; i < opp.field.length; i++) {
     const m = opp.field[i]
@@ -12,22 +22,60 @@ function opposingMonsters(state: GameState, attackerPlayer: PlayerId) {
   return { opp, monsters }
 }
 
+function opposingMonsters(state: GameState, attackerPlayer: PlayerId) {
+  return opposingMonstersFor(state, otherPlayer(attackerPlayer))
+}
+
 function hasActiveEnemy(monsters: { monster: FieldMonster }[]): boolean {
   return monsters.some(({ monster }) => monster.stance === 'active')
+}
+
+function pushNormalTargets(
+  opp: PlayerState,
+  monsters: { slot: number; monster: FieldMonster }[],
+  targets: TargetRef[],
+): void {
+  const allowWithdrawn = !hasActiveEnemy(monsters)
+  for (const { slot, monster } of monsters) {
+    if (monster.stance === 'active' || allowWithdrawn) {
+      targets.push({ kind: 'monster', player: opp.id, slot })
+    }
+  }
+}
+
+function pushRangedTargets(
+  opp: PlayerState,
+  monsters: { slot: number; monster: FieldMonster }[],
+  attacker: FieldMonster,
+  targets: TargetRef[],
+): void {
+  const noActive = !hasActiveEnemy(monsters)
+  for (const { slot, monster } of monsters) {
+    if (monster.stance === 'active') {
+      targets.push({ kind: 'monster', player: opp.id, slot })
+    } else if (attacker.stance === 'active' || noActive) {
+      targets.push({ kind: 'monster', player: opp.id, slot })
+    }
+  }
 }
 
 /**
  * Normal attack targets: opposing active monsters.
  * If the opponent has no active monsters, withdrawn ones may be attacked as if active.
+ * Free-for-all: each living opponent is judged on their own field.
  */
 export function normalAttackTargets(state: GameState, attackerPlayer: PlayerId): TargetRef[] {
-  const { opp, monsters } = opposingMonsters(state, attackerPlayer)
-  const allowWithdrawn = !hasActiveEnemy(monsters)
+  if (isTwoPlayer(state)) {
+    const { opp, monsters } = opposingMonsters(state, attackerPlayer)
+    const targets: TargetRef[] = []
+    pushNormalTargets(opp, monsters, targets)
+    return targets
+  }
+
   const targets: TargetRef[] = []
-  for (const { slot, monster } of monsters) {
-    if (monster.stance === 'active' || allowWithdrawn) {
-      targets.push({ kind: 'monster', player: opp.id, slot })
-    }
+  for (const opp of livingOpponents(state, attackerPlayer)) {
+    const { monsters } = opposingMonstersFor(state, opp.id)
+    pushNormalTargets(opp, monsters, targets)
   }
   return targets
 }
@@ -36,21 +84,24 @@ export function normalAttackTargets(state: GameState, attackerPlayer: PlayerId):
  * Ranged: can be used while withdrawn.
  * May target withdrawn enemies when the attacker is active (frontline),
  * or when the opponent has no active monsters (treated as active for targeting).
+ * Free-for-all: each living opponent is judged on their own field.
  */
 export function rangedAttackTargets(
   state: GameState,
   attackerPlayer: PlayerId,
   attacker: FieldMonster,
 ): TargetRef[] {
-  const { opp, monsters } = opposingMonsters(state, attackerPlayer)
-  const noActive = !hasActiveEnemy(monsters)
+  if (isTwoPlayer(state)) {
+    const { opp, monsters } = opposingMonsters(state, attackerPlayer)
+    const targets: TargetRef[] = []
+    pushRangedTargets(opp, monsters, attacker, targets)
+    return targets
+  }
+
   const targets: TargetRef[] = []
-  for (const { slot, monster } of monsters) {
-    if (monster.stance === 'active') {
-      targets.push({ kind: 'monster', player: opp.id, slot })
-    } else if (attacker.stance === 'active' || noActive) {
-      targets.push({ kind: 'monster', player: opp.id, slot })
-    }
+  for (const opp of livingOpponents(state, attackerPlayer)) {
+    const { monsters } = opposingMonstersFor(state, opp.id)
+    pushRangedTargets(opp, monsters, attacker, targets)
   }
   return targets
 }
@@ -71,10 +122,11 @@ export function abilityTargets(
   return normalAttackTargets(state, attackerPlayer)
 }
 
-/** Effects that say "any card": any monster or equipment on either side. */
+/** Effects that say "any card": any monster or equipment on a living seat. */
 export function anyCardTargets(state: GameState): TargetRef[] {
   const targets: TargetRef[] = []
   for (const player of state.players) {
+    if (!isLivingPlayer(player)) continue
     for (let i = 0; i < player.field.length; i++) {
       const m = player.field[i]
       if (!m) continue
@@ -191,6 +243,7 @@ export function withHostEquipment(state: GameState, targets: TargetRef[]): Targe
 export function anyMonsterTargets(state: GameState): TargetRef[] {
   const targets: TargetRef[] = []
   for (const player of state.players) {
+    if (!isLivingPlayer(player)) continue
     for (let i = 0; i < player.field.length; i++) {
       if (player.field[i]) {
         targets.push({ kind: 'monster', player: player.id, slot: i })
@@ -253,18 +306,22 @@ export function effectTargetOptions(state: GameState, effectId: string): TargetR
     case 'energy_3':
     case 'runestoneEnchant':
       return anyMonsterTargets(state).map((t) => [t])
-    case 'daybreak':
+    case 'daybreak': {
+      const foes = isTwoPlayer(state)
+        ? [getPlayer(state, otherPlayer(actorId))]
+        : livingOpponents(state, actorId)
       return withHostEquipment(
         state,
         withoutProtected(
           state,
-          state.players[otherPlayer(actorId)].field.flatMap((monster, slot) =>
-            monster
-              ? [{ kind: 'monster' as const, player: otherPlayer(actorId), slot }]
-              : [],
+          foes.flatMap((opp) =>
+            opp.field.flatMap((monster, slot) =>
+              monster ? [{ kind: 'monster' as const, player: opp.id, slot }] : [],
+            ),
           ),
         ),
       ).map((target) => [target])
+    }
     case 'empower':
       return state.players[actorId].field.flatMap((monster, slot) =>
         monster
@@ -296,10 +353,12 @@ export function effectTargetOptions(state: GameState, effectId: string): TargetR
     case 'rewind':
       return anyCardTargets(state).map((target) => [target])
     case 'inversion': {
+      // Two-player only: swaps the monsters in matching slots across the table.
+      if (!isTwoPlayer(state)) return []
       const pairs: TargetRef[][] = []
-      const length = Math.max(state.players[0].field.length, state.players[1].field.length)
+      const length = Math.max(state.players[0]!.field.length, state.players[1]!.field.length)
       for (let slot = 0; slot < length; slot++) {
-        if (!state.players[0].field[slot] || !state.players[1].field[slot]) continue
+        if (!state.players[0]!.field[slot] || !state.players[1]!.field[slot]) continue
         pairs.push([
           { kind: 'monster', player: 0, slot },
           { kind: 'monster', player: 1, slot },

@@ -8,7 +8,7 @@ export type AiWorkerRequest = {
   requestId: number
   state: Omit<GameState, 'rng' | 'random'>
   aiPlayer: PlayerId
-  decks: [DeckSetup, DeckSetup]
+  decks: DeckSetup[]
   seed: number
   timeBudgetMs?: number
   sampleCount?: number

@@ -25,6 +25,8 @@ import {
   canReceiveEnergy,
   cloneState,
   makeCard,
+  isTwoPlayer,
+  livingOpponents,
   otherPlayer,
   goldPayments,
   emptySlots,
@@ -459,11 +461,15 @@ function collectLegalActions(state: GameState): GameAction[] {
       return cardsInMatch(state).map((instanceId) => ({ type: 'MIRROR_PICK' as const, instanceId }))
     }
     if (pending.kind === 'mirrorOffer') {
+      const offerTo = pending.offerTo ?? otherPlayer(pending.owner)
       const actions: GameAction[] = [{ type: 'MIRROR_DECLINE' }]
-      if (copyCanBePlayed(state, otherPlayer(pending.owner), pending.defId)) {
+      if (copyCanBePlayed(state, offerTo, pending.defId)) {
         actions.push({ type: 'MIRROR_AGREE' })
       }
       return actions
+    }
+    if (pending.kind === 'chooseOpponent') {
+      return pending.eligible.map((player) => ({ type: 'CHOOSE_OPPONENT' as const, player }))
     }
     if (pending.kind === 'shapeshiftPick') {
       return shapeshiftDefs(state).map((defId) => ({ type: 'SHAPESHIFT_PICK' as const, defId }))
@@ -652,7 +658,8 @@ function collectLegalActions(state: GameState): GameAction[] {
       }))
     }
     if (pending.kind === 'spy') {
-      const opponent = state.players[pending.owner === 0 ? 1 : 0]
+      const opponentId = pending.targetPlayer ?? (pending.owner === 0 ? 1 : 0)
+      const opponent = state.players[opponentId]!
       return [
         { type: 'SPY_SKIP' as const },
         ...opponent.hand.map((card) => ({ type: 'SPY_MARK' as const, instanceId: card.instanceId })),
@@ -1085,14 +1092,21 @@ function collectLegalActions(state: GameState): GameAction[] {
           if (!acted && costsTeam && state.abilityUsesLeft <= 0 && !extraUse) continue
           if (ability.special === 'fireball' && player.hand.length === 0) continue
           if (ability.special === 'arcaneTome' && (monster.tome?.length ?? 0) === 0) continue
-          if (ability.special === 'trickery' && state.players[player.id === 0 ? 1 : 0].hand.length === 0) continue
+          if (ability.special === 'trickery') {
+            const foes = isTwoPlayer(state)
+              ? [state.players[player.id === 0 ? 1 : 0]!]
+              : livingOpponents(state, player.id)
+            if (foes.every((foe) => foe.hand.length === 0)) continue
+          }
           if (ability.special === 'drawOne' && player.deck.length === 0) continue
           if (ability.special === 'drawTwo' && player.deck.length === 0) continue
           if (ability.special === 'lostTreasure' && player.discard.length === 0) continue
-          if (
-            ability.special === 'sunkenPlunder' &&
-            state.players[player.id === 0 ? 1 : 0].discard.length === 0
-          ) continue
+          if (ability.special === 'sunkenPlunder') {
+            const foes = isTwoPlayer(state)
+              ? [state.players[player.id === 0 ? 1 : 0]!]
+              : livingOpponents(state, player.id)
+            if (foes.every((foe) => foe.discard.length === 0)) continue
+          }
           if (
             (ability.special === 'freezeTwo' || ability.special === 'frostBreath') &&
             abilityTargets(state, player.id, monster, ability).length < 2

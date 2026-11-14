@@ -4,7 +4,7 @@ import type { GameState, HandCard, PlayerId, PlayerState } from '../types'
 import { isRevealingPending } from './decision'
 import { createDieRng, createFloatRng, mixSeed } from './rng'
 
-export type DeckLists = [DeckSetup, DeckSetup]
+export type DeckLists = DeckSetup[]
 
 function countIds(ids: string[]): Map<string, number> {
   const counts = new Map<string, number>()

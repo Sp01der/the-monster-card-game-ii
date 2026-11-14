@@ -1,4 +1,5 @@
 import { listLegalActions } from '../actions'
+import { isTwoPlayer, nextLivingPlayerId } from '../helpers'
 import { applyAction } from '../reducer'
 import type { GameAction, GameState, PlayerId } from '../types'
 import { applyBelief, type DeckLists, withPrivateRng } from './belief'
@@ -291,7 +292,9 @@ function scoreRootAction(
   let sim = greedyPlay(after, seat, mixSeed(seed, 11), deadline, MAX_GREEDY_STEPS, true)
   if (sim.winner !== null) return evaluate(sim, seat)
 
-  const foe = (1 - seat) as PlayerId
+  const foe = isTwoPlayer(sim)
+    ? ((1 - seat) as PlayerId)
+    : nextLivingPlayerId(sim, seat)
   if (decisionPlayer(sim) === foe || sim.activePlayer === foe) {
     sim = greedyPlay(sim, foe, mixSeed(seed, 29), deadline, MAX_GREEDY_STEPS, true)
   }

@@ -404,6 +404,12 @@ export type AbilityLine = {
   upgradeText?: string
 }
 
+/** Larrathere Knight's last-turn healing, added only to its wind damage. */
+export function boostWindPrintedDamage(text: string, bonus: number): string {
+  if (bonus <= 0 || !text) return text
+  return text.replace(/(\d+)(?= wind damage\b)/g, (match) => String(Number(match) + bonus))
+}
+
 /** Raise printed damage numbers by flat attack bonuses (Sword, Cloud of Darkness, etc.). */
 export function boostPrintedDamage(text: string, bonus: number): string {
   if (bonus <= 0 || !text) return text
@@ -483,6 +489,7 @@ export function withBladeCost(
   lines: AbilityLine[],
   field?: FieldMonster,
   teamAttackBonus = 0,
+  windDamageBonus = 0,
 ): AbilityLine[] {
   if (!field) return lines
   const keep = (cost: EnergyCost): EnergyCost => adjustedCost(field, cost)
@@ -498,9 +505,11 @@ export function withBladeCost(
     return {
       ...line,
       cost: keep(line.cost),
-      body: boostPrintedDamage(line.body, bonus),
+      body: boostPrintedDamage(boostWindPrintedDamage(line.body, windDamageBonus), bonus),
       upgradeCost: line.upgradeCost ? keep(line.upgradeCost) : undefined,
-      upgradeText: line.upgradeText ? boostPrintedDamage(line.upgradeText, bonus) : undefined,
+      upgradeText: line.upgradeText
+        ? boostPrintedDamage(boostWindPrintedDamage(line.upgradeText, windDamageBonus), bonus)
+        : undefined,
     }
   })
 }

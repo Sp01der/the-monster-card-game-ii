@@ -20,6 +20,50 @@ export function otherPlayer(id: PlayerId): PlayerId {
   return id === 0 ? 1 : 0
 }
 
+export function isTwoPlayer(state: GameState): boolean {
+  return state.players.length === 2
+}
+
+/** Seats that are still in a free-for-all. Two-player matches never set eliminated. */
+export function isLivingPlayer(player: PlayerState): boolean {
+  return !player.eliminated
+}
+
+export function livingPlayers(state: GameState): PlayerState[] {
+  return state.players.filter(isLivingPlayer)
+}
+
+export function livingOpponents(state: GameState, id: PlayerId): PlayerState[] {
+  return livingPlayers(state).filter((player) => player.id !== id)
+}
+
+/** Next living seat clockwise from `id`. Skips eliminated seats. */
+export function nextLivingPlayerId(state: GameState, id: PlayerId): PlayerId {
+  const n = state.players.length
+  for (let step = 1; step <= n; step++) {
+    const candidate = ((id + step) % n) as PlayerId
+    if (isLivingPlayer(state.players[candidate]!)) return candidate
+  }
+  return id
+}
+
+/** Previous living seat clockwise (the seat before `id`). */
+export function previousLivingPlayerId(state: GameState, id: PlayerId): PlayerId {
+  const n = state.players.length
+  for (let step = 1; step <= n; step++) {
+    const candidate = ((id - step + n) % n) as PlayerId
+    if (isLivingPlayer(state.players[candidate]!)) return candidate
+  }
+  return id
+}
+
+export function asPlayerId(index: number): PlayerId {
+  if (index < 0 || index > 4 || !Number.isInteger(index)) {
+    throw new Error(`Invalid player id ${index}`)
+  }
+  return index as PlayerId
+}
+
 export function targetInstanceId(state: GameState, target: TargetRef): string | null {
   const monster = state.players[target.player].field[target.slot]
   if (!monster) return null
@@ -403,7 +447,7 @@ export function releaseHeld(
       return
     }
     host.monster.equipment.push(held.equipment)
-    if (held.equipment.defId === 'resilience') applyResilience(host.monster)
+    if (held.equipment.defId === 'resilience') applyResilience(state, host.monster)
     log(state, `${getCard(held.equipment.defId).name} returns to ${getMonster(host.monster.defId).name}.`)
     return
   }
@@ -596,9 +640,11 @@ export function discardMonster(
   if (held) releaseHeld(state, player.id, slot, held)
 }
 
-export function applyResilience(monster: FieldMonster): void {
+export function applyResilience(state: GameState, monster: FieldMonster): void {
+  const before = monster.hp
   monster.maxHp += 20
   monster.hp = Math.min(monster.maxHp, monster.hp + 30)
+  recordHeal(state, monster.hp - before)
 }
 
 export function removeResilience(monster: FieldMonster): void {
@@ -628,7 +674,7 @@ export function attachCreatedEquipment(
     hp: def.maxHp,
     maxHp: def.maxHp,
   })
-  if (defId === 'resilience') applyResilience(monster)
+  if (defId === 'resilience') applyResilience(state, monster)
   log(state, `${def.name} is attached to ${getMonster(monster.defId).name}.`)
 }
 
@@ -653,33 +699,82 @@ export function destroyEquipment(
   log(state, `${def.name} on ${getMonster(monster.defId).name} was removed.`)
 }
 
+function shouldDeferFieldLoss(state: GameState, player: PlayerState): boolean {
+  return (
+    state.pending?.kind === 'spawnBlobs' &&
+    (state.pending.owner === player.id ||
+      state.pending.queue.some((queued) => queued.owner === player.id))
+  )
+}
+
+function playerLosesOnPoints(player: PlayerState): boolean {
+  return player.points <= 0
+}
+
+function playerLosesOnField(state: GameState, player: PlayerState): boolean {
+  if (shouldDeferFieldLoss(state, player)) return false
+  if (!player.hasFinishedFirstTurn) return false
+  return !hasMonsterInMatch(player)
+}
+
+function eliminatePlayer(state: GameState, player: PlayerState, reason: string): void {
+  if (player.eliminated) return
+  player.eliminated = true
+  log(state, `${player.name} is eliminated (${reason}).`)
+}
+
+function finishFreeForAllIfNeeded(state: GameState): void {
+  const living = livingPlayers(state)
+  if (living.length === 1) {
+    state.winner = living[0]!.id
+    log(state, `${living[0]!.name} wins!`)
+  } else if (living.length === 0) {
+    // Should not happen in normal play; leave winner unset.
+  }
+}
+
 export function checkLosses(state: GameState): void {
   if (state.winner !== null) return
 
+  if (isTwoPlayer(state)) {
+    for (const player of state.players) {
+      if (player.points <= 0) {
+        state.winner = otherPlayer(player.id)
+        log(state, `${player.name} has no points. ${getPlayer(state, state.winner).name} wins!`)
+        return
+      }
+    }
+
+    for (const player of state.players) {
+      if (shouldDeferFieldLoss(state, player)) continue
+      if (!player.hasFinishedFirstTurn) continue
+      if (!hasMonsterInMatch(player)) {
+        state.winner = otherPlayer(player.id)
+        log(
+          state,
+          `${player.name} has no monsters in play. ${getPlayer(state, state.winner).name} wins!`,
+        )
+        return
+      }
+    }
+    return
+  }
+
   for (const player of state.players) {
-    if (player.points <= 0) {
-      state.winner = otherPlayer(player.id)
-      log(state, `${player.name} has no points. ${getPlayer(state, state.winner).name} wins!`)
-      return
+    if (player.eliminated) continue
+    if (playerLosesOnPoints(player)) {
+      eliminatePlayer(state, player, 'no points')
     }
   }
 
   for (const player of state.players) {
-    if (
-      state.pending?.kind === 'spawnBlobs' &&
-      (state.pending.owner === player.id ||
-        state.pending.queue.some((queued) => queued.owner === player.id))
-    ) continue
-    if (!player.hasFinishedFirstTurn) continue
-    if (!hasMonsterInMatch(player)) {
-      state.winner = otherPlayer(player.id)
-      log(
-        state,
-        `${player.name} has no monsters in play. ${getPlayer(state, state.winner).name} wins!`,
-      )
-      return
+    if (player.eliminated) continue
+    if (playerLosesOnField(state, player)) {
+      eliminatePlayer(state, player, 'no monsters in play')
     }
   }
+
+  finishFreeForAllIfNeeded(state)
 }
 
 export function monstersInPlay(player: PlayerState): number {

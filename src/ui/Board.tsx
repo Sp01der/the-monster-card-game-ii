@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyAction,
   decisionPlayer,
@@ -7,6 +7,7 @@ import {
   getMonster,
   identityDefId,
   guardingGoldDefense,
+  knightWindBonus,
   isUndoablePhaseAction,
   monsterAbilities,
   listLegalActions,
@@ -23,7 +24,8 @@ type Props = {
   state: GameState
   onChange: (next: GameState) => void
   onNewGame: () => void
-  computerPlayer?: PlayerId | null
+  /** Seats controlled by the computer. Empty for full hotseat. */
+  computerPlayers?: PlayerId[]
   thinking?: boolean
 }
 
@@ -61,6 +63,7 @@ type UiSel =
   | { kind: 'rainBlob'; handIndex: number }
   | { kind: 'darkChargeDiscard' }
   | { kind: 'darkChargeTarget'; discardInstanceId: string }
+  | { kind: 'etherealReturn'; instanceId: string }
 
 function targetKey(t: TargetRef): string {
   if (t.kind === 'monster') return `m-${t.player}-${t.slot}`
@@ -185,7 +188,9 @@ function describeAction(state: GameState, action: GameAction): string {
     case 'MARCH_FINISH':
       return 'Finish marching'
     case 'PORTAL_FINISH':
-      return 'Finish playing cards'
+      return state.pending?.kind === 'playCards' && state.pending.effectsOnly
+        ? 'Finish without playing'
+        : 'Finish playing cards'
     case 'SPY_MARK':
       return 'Mark this card'
     case 'SPY_SKIP':
@@ -313,6 +318,8 @@ function describeAction(state: GameState, action: GameAction): string {
       return 'Do not shoot'
     case 'WISDOM_ENERGY':
       return 'Give 1 energy'
+    case 'CHOOSE_OPPONENT':
+      return `Choose ${state.players[action.player]!.name}`
   }
 }
 
@@ -349,27 +356,87 @@ export function Board({
   state,
   onChange,
   onNewGame,
-  computerPlayer = null,
+  computerPlayers = [],
   thinking = false,
 }: Props) {
   const [sel, setSel] = useState<UiSel>({ kind: 'none' })
   const [undoStack, setUndoStack] = useState<GameState[]>([])
   const [rallyFirst, setRallyFirst] = useState<TargetRef | null>(null)
-  const [discardView, setDiscardView] = useState<0 | 1 | null>(null)
+  const [discardView, setDiscardView] = useState<PlayerId | null>(null)
   /** Card chosen in the Darklight Portal modal before pressing Play. */
   const [darklightPick, setDarklightPick] = useState<number | null>(null)
   const [tomeView, setTomeView] = useState<{ playerId: PlayerId; slot: number } | null>(null)
+  const spellSelectKey = useRef<string | null>(null)
   const legal = useMemo(() => listLegalActions(state), [state])
   const chooser = decisionPlayer(state)
-  const vsComputer = computerPlayer !== null
-  const humanPlayer: PlayerId = vsComputer ? ((1 - computerPlayer) as PlayerId) : state.activePlayer
-  const computerDeciding = vsComputer && chooser === computerPlayer
+
+  useEffect(() => {
+    const pending = state.pending
+    if (pending?.kind !== 'playCards' || !pending.effectsOnly || !pending.preferredInstanceId) {
+      if (pending?.kind !== 'playCards') spellSelectKey.current = null
+      return
+    }
+    const key = pending.preferredInstanceId
+    if (spellSelectKey.current === key) return
+    spellSelectKey.current = key
+    const owner = state.players[pending.owner]
+    const handIndex = owner.hand.findIndex((card) => card.instanceId === key)
+    if (handIndex < 0) return
+    const needsTarget = legal.some(
+      (action) =>
+        action.type === 'PLAY_EFFECT' &&
+        !action.fromDiscard &&
+        action.handIndex === handIndex &&
+        action.targets.length > 0,
+    )
+    if (!needsTarget) return
+    setSel({ kind: 'hand', handIndex })
+  }, [state, legal])
+  const computerSet = useMemo(() => new Set(computerPlayers), [computerPlayers])
+  const vsComputer = computerSet.size > 0
+  const isTwoSeat = state.players.length === 2
+  const humanPlayer: PlayerId = (() => {
+    if (isTwoSeat && computerPlayers.length === 1) {
+      return (1 - computerPlayers[0]!) as PlayerId
+    }
+    if (!computerSet.has(chooser)) return chooser
+    const human = state.players.find((player) => !computerSet.has(player.id) && !player.eliminated)
+    return human?.id ?? state.activePlayer
+  })()
+  const computerDeciding = computerSet.has(chooser)
   const inputLocked = thinking || computerDeciding
-  const active = state.players[state.activePlayer]
-  const inactive = state.players[state.activePlayer === 0 ? 1 : 0]
-  const topPlayer = vsComputer ? state.players[computerPlayer] : inactive
-  const bottomPlayer = vsComputer ? state.players[humanPlayer] : active
-  const handOwner = vsComputer ? state.players[humanPlayer] : active
+  const active = state.players[state.activePlayer]!
+  const inactive = isTwoSeat
+    ? state.players[state.activePlayer === 0 ? 1 : 0]!
+    : state.players.find((player) => player.id !== state.activePlayer && !player.eliminated) ?? active
+  const topPlayer = isTwoSeat
+    ? vsComputer
+      ? state.players[computerPlayers[0]!]!
+      : inactive
+    : null
+  const bottomPlayer = isTwoSeat
+    ? vsComputer
+      ? state.players[humanPlayer]!
+      : active
+    : state.players[humanPlayer]!
+  // Left-to-right around the table: your left neighbor → your right neighbor.
+  const otherPlayers = isTwoSeat
+    ? []
+    : (() => {
+        const n = state.players.length
+        const seats: typeof state.players = []
+        for (let step = 1; step < n; step++) {
+          const id = ((humanPlayer - step + n) % n) as PlayerId
+          const seat = state.players[id]
+          if (seat && !seat.eliminated) seats.push(seat)
+        }
+        return seats
+      })()
+  const handOwner = isTwoSeat
+    ? vsComputer
+      ? state.players[humanPlayer]!
+      : active
+    : state.players[humanPlayer]!
   const canDraw =
     !inputLocked &&
     chooser === handOwner.id &&
@@ -440,7 +507,9 @@ export function Board({
     ) : null
 
   if (state.awaitingHandoff) {
-    if (vsComputer) {
+    const skipCover =
+      (isTwoSeat && vsComputer) || computerSet.has(state.activePlayer)
+    if (skipCover) {
       return (
         <div className="handoff">
           <div className="handoff-card">
@@ -470,7 +539,7 @@ export function Board({
   }
 
   if (state.openingMulligan && !state.openingMulligan.decided[active.id]) {
-    if (vsComputer && active.id === computerPlayer) {
+    if (computerSet.has(active.id)) {
       return (
         <div className="handoff">
           <div className="handoff-card">
@@ -564,7 +633,17 @@ export function Board({
   } else if (state.pending?.kind === 'mirrorPick') {
     prompt = 'Mirror Pact: choose any card in the match.'
   } else if (state.pending?.kind === 'mirrorOffer') {
-    prompt = `${state.players[state.pending.owner === 0 ? 1 : 0].name} may play a copy of ${getCard(state.pending.defId).name}.`
+    const offerTo = state.pending.offerTo ?? (state.pending.owner === 0 ? 1 : 0)
+    prompt = `${state.players[offerTo]!.name} may play a copy of ${getCard(state.pending.defId).name}.`
+  } else if (state.pending?.kind === 'chooseOpponent') {
+    prompt =
+      state.pending.purpose === 'trickery'
+        ? 'Choose whose hand to take a card from.'
+        : state.pending.purpose === 'spy'
+          ? 'Choose whose hand to view.'
+          : state.pending.purpose === 'sunkenPlunder'
+            ? "Choose whose discard to take a card from."
+            : 'Choose which opponent to Tax.'
   } else if (state.pending?.kind === 'shapeshiftPick') {
     prompt = 'Choose a monster card worth 3 points or less. Shapeshifter keeps its name, HP, energy, equipment, and points.'
   } else if (state.pending?.kind === 'rewindDiscard') {
@@ -573,9 +652,11 @@ export function Board({
     prompt =
       state.pending.mirrorRole === 'self'
         ? 'You may play your free copy, or skip it.'
-        : state.pending.monstersOnly
-          ? 'You may play a monster for free, or finish.'
-          : `${state.players[state.pending.owner].name} plays a free copy.`
+        : state.pending.effectsOnly
+          ? 'Choose an effect in your hand to play for free. The Wizrobe is the source of its damage, then finish.'
+          : state.pending.monstersOnly
+            ? 'You may play a monster for free, or finish.'
+            : `${state.players[state.pending.owner].name} plays a free copy.`
   } else if (state.pending?.kind === 'assignGold') {
     prompt = `Give this gold to a Gold Affinity card (${state.pending.remaining} remaining).`
     for (const action of legal) {
@@ -690,6 +771,20 @@ export function Board({
     for (const a of legal) {
       if (a.type === 'RAIN_PLAY_BLOB' && a.handIndex === sel.handIndex) {
         highlightTargets.add(`slot-${state.pending.owner}-${a.slot}-${a.stance}`)
+      }
+    }
+  } else if (sel.kind === 'etherealReturn') {
+    let returnName = 'this card'
+    for (const side of state.players) {
+      for (const entry of side.ethereal ?? []) {
+        const monster = entry.attachedMonster ?? entry.monster
+        if (monster?.instanceId === sel.instanceId) returnName = getCard(monster.defId).name
+      }
+    }
+    prompt = `Place ${returnName} on an empty slot, active or withdrawn.`
+    for (const action of legal) {
+      if (action.type === 'RETURN_ETHEREAL' && action.instanceId === sel.instanceId) {
+        highlightTargets.add(`slot-${active.id}-${action.slot}-${action.stance}`)
       }
     }
   } else if (sel.kind === 'hand') {
@@ -942,19 +1037,24 @@ export function Board({
     prompt = 'End your turn to resolve status effects.'
   }
 
-  function onFieldSlotClick(playerId: 0 | 1, slot: number, stance?: Stance) {
+  function onFieldSlotClick(playerId: PlayerId, slot: number, stance?: Stance) {
     if (darklightModalOpen) return
     const clicked: TargetRef = { kind: 'monster', player: playerId, slot }
-    if (!state.pending && stance) {
-      const returns = legal.filter(
-        (action): action is Extract<GameAction, { type: 'RETURN_ETHEREAL' }> =>
-          action.type === 'RETURN_ETHEREAL' && action.slot === slot && action.stance === stance,
+    if (
+      sel.kind === 'etherealReturn' &&
+      stance &&
+      playerId === active.id &&
+      state.players[playerId].field[slot] === null
+    ) {
+      const action = legal.find(
+        (candidate) =>
+          candidate.type === 'RETURN_ETHEREAL' &&
+          candidate.instanceId === sel.instanceId &&
+          candidate.slot === slot &&
+          candidate.stance === stance,
       )
-      const ids = new Set(returns.map((action) => action.instanceId))
-      if (ids.size === 1 && returns[0]) {
-        dispatch(returns[0])
-        return
-      }
+      if (action) dispatch(action)
+      return
     }
     if (state.pending?.kind === 'assignGold' && playerId === state.pending.owner) {
       const action = legal.find((a) => a.type === 'ASSIGN_GOLD' && a.slot === slot)
@@ -1442,13 +1542,13 @@ export function Board({
     }
   }
 
-  function onAbilityClick(playerId: 0 | 1, slot: number, abilityId: string) {
+  function onAbilityClick(playerId: PlayerId, slot: number, abilityId: string) {
     if (darklightModalOpen) return
     if (playerId !== active.id || state.phase !== 'main') return
     beginAbility(slot, abilityId)
   }
 
-  function onEquipmentClick(playerId: 0 | 1, slot: number, equipmentIndex: number) {
+  function onEquipmentClick(playerId: PlayerId, slot: number, equipmentIndex: number) {
     if (darklightModalOpen) return
     const t: TargetRef = { kind: 'equipment', player: playerId, slot, equipmentIndex }
     if (state.pending?.kind === 'tax') {
@@ -1599,6 +1699,7 @@ export function Board({
             {active.name}&apos;s turn · phase: <strong>{state.phase}</strong>
             {active.isFirstTurn ? ' · first turn' : ''}
             {vsComputer ? ' · vs computer' : ''}
+            {!isTwoSeat ? ` · ${state.players.length} players` : ''}
           </p>
           {inputLocked ? <p className="thinking-banner">Computer is thinking…</p> : null}
         </div>
@@ -1607,11 +1708,13 @@ export function Board({
         </button>
       </header>
 
-      <div className="battle-layout">
+      <div className={`battle-layout${isTwoSeat ? '' : ' battle-layout-multi'}`}>
+      {isTwoSeat && topPlayer ? (
       <PlayerRow
         game={state}
         player={topPlayer}
         you={false}
+        activeTurn={topPlayer.id === state.activePlayer}
         highlightTargets={highlightTargets}
         rallyFirst={rallyFirst}
         canDraw={false}
@@ -1624,12 +1727,48 @@ export function Board({
         legal={inputLocked ? [] : legal}
         selectedAbility={null}
       />
+      ) : (
+        <div
+          className="opponents-rail"
+          data-seat-count={otherPlayers.length}
+          aria-label="Opponents"
+        >
+          {otherPlayers.map((player) => (
+            <PlayerRow
+              key={player.id}
+              game={state}
+              player={player}
+              you={false}
+              compact
+              activeTurn={player.id === state.activePlayer}
+              highlightTargets={highlightTargets}
+              rallyFirst={rallyFirst}
+              canDraw={false}
+              onDraw={() => {}}
+              onOpenDiscard={() => setDiscardView(player.id)}
+              onSlotClick={inputLocked ? () => {} : onFieldSlotClick}
+              onEquipmentClick={inputLocked ? () => {} : onEquipmentClick}
+              onAbilityClick={inputLocked ? () => {} : onAbilityClick}
+              onViewTome={(playerId, slot) => setTomeView({ playerId, slot })}
+              legal={inputLocked ? [] : legal}
+              selectedAbility={null}
+            />
+          ))}
+        </div>
+      )}
 
       <section className="center-panel">
         <p className="prompt">{prompt}{rallyFirst ? ' Now choose the second monster.' : ''}</p>
-        {legal.some((action) => action.type === 'PEGASUS_MOVE' || action.type === 'VERIDIAN_PAY' || action.type === 'BLOODCRAFT_PICK' || action.type === 'HAUNTED_PICK' || action.type === 'FIREBALL_DISCARD' || action.type === 'TOME_PICK' || action.type === 'SUMMON_TYPE' || action.type === 'ENCHANT_STONE' || action.type === 'TAX_GIVE' || action.type === 'STONE_CURE' || action.type === 'STONE_KEEP' || action.type === 'ARROW_SKIP') && (
+        {legal.some((action) => action.type === 'PEGASUS_MOVE' || action.type === 'CHOOSE_OPPONENT' || action.type === 'VERIDIAN_PAY' || action.type === 'BLOODCRAFT_PICK' || action.type === 'HAUNTED_PICK' || action.type === 'FIREBALL_DISCARD' || action.type === 'TOME_PICK' || action.type === 'SUMMON_TYPE' || action.type === 'ENCHANT_STONE' || action.type === 'TAX_GIVE' || action.type === 'STONE_CURE' || action.type === 'STONE_KEEP' || action.type === 'ARROW_SKIP') && (
           <div className="chip-row">
             {legal.flatMap((action) => {
+              if (action.type === 'CHOOSE_OPPONENT') {
+                return [(
+                  <button key={`opp-${action.player}`} type="button" className="chip" onClick={() => dispatch(action)}>
+                    {state.players[action.player]!.name}
+                  </button>
+                )]
+              }
               if (action.type === 'PEGASUS_MOVE') {
                 const monster = active.field[action.slot]
                 const name = monster ? getCard(monster.defId).name : 'Card'
@@ -1724,6 +1863,11 @@ export function Board({
           {(sel.kind === 'darkChargeDiscard' || sel.kind === 'darkChargeTarget') && (
             <button type="button" className="secondary" onClick={() => setSel({ kind: 'none' })}>
               Cancel Dark Charge
+            </button>
+          )}
+          {sel.kind === 'etherealReturn' && (
+            <button type="button" className="secondary" onClick={() => setSel({ kind: 'none' })}>
+              Cancel return
             </button>
           )}
         </div>
@@ -1905,7 +2049,9 @@ export function Board({
 
         {(state.pending?.kind === 'mirrorOffer' ||
           state.pending?.kind === 'shapeshiftPick' ||
-          (state.pending?.kind === 'playCards' && state.pending.freePlay)) && (
+          (state.pending?.kind === 'playCards' &&
+            state.pending.freePlay &&
+            !state.pending.effectsOnly)) && (
           <div className="ability-choice">
             <div className="chip-row">
               {legal.map((action, index) => (
@@ -2068,6 +2214,7 @@ export function Board({
         game={state}
         player={bottomPlayer}
         you
+        activeTurn={bottomPlayer.id === state.activePlayer}
         highlightTargets={highlightTargets}
         rallyFirst={rallyFirst}
         selectedSlot={
@@ -2171,20 +2318,44 @@ export function Board({
                     (action) =>
                       action.type === 'REWIND_USE' && action.rewindInstanceId === entry.card.instanceId,
                   )
+                const returnMonster =
+                  entry.attachedMonster ?? (entry.returnPlayer === undefined ? entry.monster : undefined)
+                const returning =
+                  !inputLocked &&
+                  returnMonster !== undefined &&
+                  legal.some(
+                    (action) =>
+                      action.type === 'RETURN_ETHEREAL' && action.instanceId === returnMonster.instanceId,
+                  )
+                const returnSelected =
+                  sel.kind === 'etherealReturn' && sel.instanceId === returnMonster?.instanceId
                 const remembered = entry.snapshot ? getCard(entry.snapshot.defId).name : null
                 return (
                   <button
                     key={entry.card.instanceId}
                     type="button"
-                    className={`tcg-card ethereal-card kind-effect${use ? ' playable' : ''}`}
-                    disabled={!use}
+                    className={`tcg-card ethereal-card kind-effect${use || returning ? ' playable' : ''}${
+                      returnSelected ? ' selected' : ''
+                    }`}
+                    disabled={!use && !returning}
                     title={
-                      remembered
-                        ? `${player.name}'s ${getCard(entry.card.defId).name} · remembering ${remembered}`
-                        : `${player.name}'s ${getCard(entry.card.defId).name}`
+                      returning && returnMonster
+                        ? `Return ${getCard(returnMonster.defId).name}`
+                        : remembered
+                          ? `${player.name}'s ${getCard(entry.card.defId).name} · remembering ${remembered}`
+                          : `${player.name}'s ${getCard(entry.card.defId).name}`
                     }
                     onClick={() => {
-                      if (use) dispatch(use)
+                      if (use) {
+                        dispatch(use)
+                        return
+                      }
+                      if (!returning || !returnMonster) return
+                      setSel(
+                        returnSelected
+                          ? { kind: 'none' }
+                          : { kind: 'etherealReturn', instanceId: returnMonster.instanceId },
+                      )
                     }}
                   >
                     <CardFace defId={entry.card.defId} compact />
@@ -2793,6 +2964,8 @@ function PlayerRow({
   game,
   player,
   you,
+  compact = false,
+  activeTurn = false,
   highlightTargets,
   rallyFirst,
   selectedSlot = null,
@@ -2809,33 +2982,58 @@ function PlayerRow({
   game: GameState
   player: GameState['players'][0]
   you: boolean
+  /** Dense seat for the multiplayer opponent gallery. */
+  compact?: boolean
+  activeTurn?: boolean
   highlightTargets: Set<string>
   rallyFirst: TargetRef | null
   selectedSlot?: number | null
   canDraw: boolean
   onDraw: () => void
   onOpenDiscard: () => void
-  onSlotClick: (playerId: 0 | 1, slot: number, stance?: Stance) => void
-  onEquipmentClick: (playerId: 0 | 1, slot: number, equipmentIndex: number) => void
-  onAbilityClick: (playerId: 0 | 1, slot: number, abilityId: string) => void
-  onViewTome: (playerId: 0 | 1, slot: number) => void
+  onSlotClick: (playerId: PlayerId, slot: number, stance?: Stance) => void
+  onEquipmentClick: (playerId: PlayerId, slot: number, equipmentIndex: number) => void
+  onAbilityClick: (playerId: PlayerId, slot: number, abilityId: string) => void
+  onViewTome: (playerId: PlayerId, slot: number) => void
   legal: GameAction[]
   selectedAbility: { slot: number; abilityId: string } | null
 }) {
+  const fieldSlotCount =
+    (game.pending?.kind === 'placeWeed' || game.pending?.kind === 'placeBoneling') &&
+    game.pending.owner === player.id &&
+    player.field.every((occupant) => occupant !== null)
+      ? player.field.length + 1
+      : player.field.length
+  const slotMin = compact ? '118px' : '132px'
+
   return (
-    <section className={`player-row ${you ? 'you' : 'foe'}`}>
+    <section
+      className={`player-row ${you ? 'you' : 'foe'}${compact ? ' compact' : ''}${
+        activeTurn ? ' active-turn' : ''
+      }${player.eliminated ? ' eliminated' : ''}`}
+    >
       <div className="player-meta">
         <h2>
           {player.name} {you ? '(you)' : ''}
+          {player.eliminated ? ' (out)' : ''}
+          {activeTurn ? <span className="turn-pill">turn</span> : null}
         </h2>
         <p>
           Points: <strong>{player.points}</strong>
+          {compact && (
+            <>
+              {' '}
+              · Draw <strong>{player.deck.length}</strong> · Discard{' '}
+              <strong>{player.discard.length}</strong>
+            </>
+          )}
           {player.skipEnergyPhases > 0 && <> · Energy skips: <strong>{player.skipEnergyPhases}</strong></>}
           {player.iceMirrorCharges > 0 && <> · Ice Mirror: <strong>{player.iceMirrorCharges}</strong></>}
           {player.lingeringEnergy && <> · Lingering Energy</>}
         </p>
       </div>
       <div className="play-area">
+        {!compact && (
         <button
           type="button"
           className={`pile draw-pile${canDraw ? ' interactive' : ''}${
@@ -2850,17 +3048,12 @@ function PlayerRow({
           <span className="pile-count">{player.deck.length}</span>
           {canDraw && <span className="pile-hint">Click to draw</span>}
         </button>
+        )}
 
         <div
           className="field-row"
           style={{
-            gridTemplateColumns: `repeat(${
-              (game.pending?.kind === 'placeWeed' || game.pending?.kind === 'placeBoneling') &&
-              game.pending.owner === player.id &&
-              player.field.every((occupant) => occupant !== null)
-                ? player.field.length + 1
-                : player.field.length
-            }, minmax(132px, 1fr))`,
+            gridTemplateColumns: `repeat(${fieldSlotCount}, minmax(${slotMin}, 1fr))`,
           }}
         >
           {((game.pending?.kind === 'placeWeed' || game.pending?.kind === 'placeBoneling') &&
@@ -2925,6 +3118,11 @@ function PlayerRow({
                   extraDefense={guardingGoldDefense(game, monster)}
                   teamAttackBonus={
                     game.activePlayer === player.id ? (player.attackBonus ?? 0) : 0
+                  }
+                  windDamageBonus={
+                    identityDefId(monster) === 'larrathere_knight'
+                      ? knightWindBonus(player.healedLastTurn)
+                      : 0
                   }
                   highlightedEquipment={eqHighlights}
                   onEquipmentClick={(eqIndex) => onEquipmentClick(player.id, slot, eqIndex)}
@@ -3015,6 +3213,11 @@ function PlayerRow({
                   teamAttackBonus={
                     game.activePlayer === player.id ? (player.attackBonus ?? 0) : 0
                   }
+                  windDamageBonus={
+                    identityDefId(protector) === 'larrathere_knight'
+                      ? knightWindBonus(player.healedLastTurn)
+                      : 0
+                  }
                   highlightedEquipment={protectorEqHighlights}
                   onEquipmentClick={(eqIndex) =>
                     onEquipmentClick(player.id, protectorIndex, eqIndex)
@@ -3091,16 +3294,27 @@ function PlayerRow({
           })}
         </div>
 
-        <button
-          type="button"
-          className={`pile discard-pile${player.discard.length === 0 ? ' empty-pile' : ' interactive'}`}
-          title="View discard pile"
-          onClick={onOpenDiscard}
-        >
-          <span className="pile-label">Discard</span>
-          <span className="pile-count">{player.discard.length}</span>
-          <span className="pile-hint">Click to view</span>
-        </button>
+        {compact ? (
+          <button
+            type="button"
+            className="seat-discard"
+            title="View discard pile"
+            onClick={onOpenDiscard}
+          >
+            Discard
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={`pile discard-pile${player.discard.length === 0 ? ' empty-pile' : ' interactive'}`}
+            title="View discard pile"
+            onClick={onOpenDiscard}
+          >
+            <span className="pile-label">Discard</span>
+            <span className="pile-count">{player.discard.length}</span>
+            <span className="pile-hint">Click to view</span>
+          </button>
+        )}
       </div>
     </section>
   )

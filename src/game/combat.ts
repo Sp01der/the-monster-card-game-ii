@@ -1,5 +1,5 @@
 import { getCard, getMonster, identityDefId } from './catalog'
-import { computeDamage, attackBonusFor, guardingGoldDefense, lensSuccessFaces, wearsLifestealBlade } from './damage'
+import { computeDamage, attackBonusFor, guardingGoldDefense, knightWindBonus, lensSuccessFaces, wearsLifestealBlade } from './damage'
 import {
   applyStatus,
   checkLosses,
@@ -124,7 +124,7 @@ export function dealDamageToTarget(
       const owner = state.players.find((player) =>
         player.field.some((monster) => monster?.instanceId === attacker?.instanceId),
       )
-      base += Math.floor((owner?.healedLastTurn ?? 0) / 10) * 10
+      base += knightWindBonus(owner?.healedLastTurn)
     }
   }
   if (!attacker && state.spellSourceInstanceId) {
@@ -295,11 +295,14 @@ export function healTarget(state: GameState, target: TargetRef, amount: number):
 
   const before = resolved.monster.hp
   resolved.monster.hp = Math.min(resolved.monster.maxHp, resolved.monster.hp + amount)
-  recordHeal(state, resolved.monster.hp - before)
-  log(
-    state,
-    `${getMonster(resolved.monster.defId).name} heals ${amount} (now ${resolved.monster.hp} HP).`,
-  )
+  const gained = resolved.monster.hp - before
+  recordHeal(state, gained)
+  const name = getMonster(resolved.monster.defId).name
+  if (gained <= 0) {
+    log(state, `${name} is already at full HP.`)
+    return
+  }
+  log(state, `${name} heals ${gained} (now ${resolved.monster.hp} HP).`)
 }
 
 function effectsForChoice(choice: AbilityChoice): AbilityEffect[] {

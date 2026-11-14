@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { listLegalActions } from './actions'
 import { getCard } from './catalog'
 import { dealDamageToTarget } from './combat'
+import { applyResilience } from './helpers'
 import { applyAction } from './reducer'
 import { createGame } from './setup'
 import type { FieldMonster, GameAction, GameState, PlayerState } from './types'
@@ -273,6 +274,26 @@ describe('wind, stone, and ethereal cards', () => {
     later.players[0].field[0]!.energy = 1
     put(later.players[1], 0, 'blob')
     expect(use(later, 'way_of_the_wind').players[1].field[0]?.hp).toBe(20)
+  })
+
+  it('counts the heal when max HP also rises, and ignores the max HP itself', () => {
+    const wounded = main(game())
+    put(wounded.players[0], 0, 'blob', { hp: 20 })
+    applyResilience(wounded, wounded.players[0].field[0]!)
+    expect(wounded.players[0].field[0]).toMatchObject({ hp: 50, maxHp: 70 })
+    expect(wounded.players[0].healedThisTurn).toBe(30)
+
+    const full = main(game())
+    put(full.players[0], 0, 'blob')
+    applyResilience(full, full.players[0].field[0]!)
+    expect(full.players[0].field[0]).toMatchObject({ hp: 70, maxHp: 70 })
+    expect(full.players[0].healedThisTurn).toBe(20)
+
+    const grown = main(game())
+    put(grown.players[0], 0, 'ecoling', { energy: 3 })
+    const after = use(grown, 'growth')
+    expect(after.players[0].field[0]).toMatchObject({ hp: 100, maxHp: 100 })
+    expect(after.players[0].healedThisTurn).toBe(20)
   })
 
   it('gives an unused Construct Warrior 1 energy and strikes twice through defense', () => {

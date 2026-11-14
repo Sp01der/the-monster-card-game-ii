@@ -99,7 +99,7 @@ describe('Wildersel cards', () => {
 
   it('deals 50 with Treblae Shot', () => {
     const state = main(game())
-    put(state.players[0], 0, 'corsair_of_wildersel', { hp: 80, maxHp: 80, energy: 3 })
+    put(state.players[0], 0, 'corsair_of_wildersel', { hp: 80, maxHp: 80, energy: 4 })
     put(state.players[1], 0, 'blob', { hp: 80, maxHp: 80 })
     const next = applyAction(state, action(state, (candidate) => candidate.type === 'USE_ABILITY' && candidate.abilityId === 'treblae_shot'))
     expect(next.players[1].field[0]?.hp).toBe(30)

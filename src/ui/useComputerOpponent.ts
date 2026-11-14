@@ -16,22 +16,31 @@ function stripRng(state: GameState): Omit<GameState, 'rng' | 'random'> {
   return rest
 }
 
+function asSeatSet(computerPlayers: PlayerId | PlayerId[] | null): Set<PlayerId> {
+  if (computerPlayers === null) return new Set()
+  if (Array.isArray(computerPlayers)) return new Set(computerPlayers)
+  return new Set([computerPlayers])
+}
+
 /**
- * Drives the computer seat: auto-handoff, paced search, stale-result guard for Strict Mode.
+ * Drives computer seats: auto-handoff for those seats, paced search, stale-result guard.
+ * Pass one PlayerId for the classic two-player computer match, or an array for free-for-all.
  */
 export function useComputerOpponent(
   game: GameState | null,
   setGame: (next: GameState | ((current: GameState | null) => GameState | null)) => void,
-  computerPlayer: PlayerId | null,
-  decks: [DeckSetup, DeckSetup] | null,
+  computerPlayers: PlayerId | PlayerId[] | null,
+  decks: DeckSetup[] | null,
 ): boolean {
   const [thinking, setThinking] = useState(false)
   const requestIdRef = useRef(0)
   const workerRef = useRef<Worker | null>(null)
   const seedRef = useRef((Math.random() * 0xffffffff) >>> 0)
+  const seats = asSeatSet(computerPlayers)
+  const seatKey = [...seats].sort().join(',')
 
   useEffect(() => {
-    if (computerPlayer === null) return
+    if (seats.size === 0) return
     const worker = new Worker(new URL('../game/ai/ai.worker.ts', import.meta.url), {
       type: 'module',
     })
@@ -40,20 +49,24 @@ export function useComputerOpponent(
       worker.terminate()
       workerRef.current = null
     }
-  }, [computerPlayer])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- recreate when the seat set changes
+  }, [seatKey])
 
-  // Skip pass-the-device covers in computer matches.
+  // Two-player vs one computer: keep skipping every handoff cover.
+  // Free-for-all: only skip when the seat receiving the device is a computer.
   useEffect(() => {
-    if (!game || computerPlayer === null) return
+    if (!game || seats.size === 0) return
     if (!game.awaitingHandoff) return
+    const twoPlayerHotseatAi = game.players.length === 2 && seats.size === 1
+    if (!twoPlayerHotseatAi && !seats.has(game.activePlayer)) return
     setGame((current) => {
       if (!current?.awaitingHandoff) return current
       return applyAction(current, { type: 'CONFIRM_HANDOFF' })
     })
-  }, [game, computerPlayer, setGame])
+  }, [game, seatKey, setGame, seats])
 
   useEffect(() => {
-    if (!game || computerPlayer === null || !decks) {
+    if (!game || seats.size === 0 || !decks) {
       setThinking(false)
       return
     }
@@ -62,7 +75,8 @@ export function useComputerOpponent(
       return
     }
     if (game.awaitingHandoff) return
-    if (decisionPlayer(game) !== computerPlayer) {
+    const chooser = decisionPlayer(game)
+    if (!seats.has(chooser)) {
       setThinking(false)
       return
     }
@@ -80,7 +94,7 @@ export function useComputerOpponent(
       const payload: AiWorkerRequest = {
         requestId,
         state: stripRng(game),
-        aiPlayer: computerPlayer,
+        aiPlayer: chooser,
         decks,
         seed: seedRef.current,
       }
@@ -96,7 +110,7 @@ export function useComputerOpponent(
       }
       const action: GameAction = event.data.action
       setGame((current) => {
-        if (!current || decisionPlayer(current) !== computerPlayer) return current
+        if (!current || decisionPlayer(current) !== chooser) return current
         try {
           return applyAction(current, action)
         } catch (error) {
@@ -113,7 +127,7 @@ export function useComputerOpponent(
       window.clearTimeout(pace)
       worker.removeEventListener('message', onMessage)
     }
-  }, [game, computerPlayer, decks, setGame])
+  }, [game, seatKey, decks, setGame, seats])
 
   return thinking
 }

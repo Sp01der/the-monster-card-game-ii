@@ -94,5 +94,21 @@ describe('withBladeCost live damage', () => {
     expect(fires.find((line) => line.id === 'veridian_fires')?.body).toBe(
       "Lower this card's HP by 10 any number of times. Deal 20 damage per 10 HP lost. +10 damage.",
     )
+
+    const knight = withBladeCost(
+      abilityLines(getCard('larrathere_knight')),
+      mon({
+        defId: 'larrathere_knight',
+        energy: 1,
+        equipment: [{ instanceId: 's', defId: 'sword', hp: 20, maxHp: 20 }],
+      }),
+      0,
+      30,
+    )
+    // 0 printed + 30 from last turn's healing + 20 sword (spare energy)
+    expect(knight.find((line) => line.id === 'way_of_the_wind')?.body).toBe('50 wind damage.')
+    expect(knight.find((line) => line.id === 'render_aid')?.body).toBe(
+      'Heal a monster controlled by each player 30 HP. You gain 1 additional energy in the energy phase.',
+    )
   })
 })

@@ -74,8 +74,10 @@ function pendingDecisionPlayer(pending: PendingInteraction): PlayerId {
     case 'forceWithdraw':
     case 'handDiscard':
       return pending.player
+    case 'chooseOpponent':
+      return pending.owner
     case 'mirrorOffer':
-      return otherPlayer(pending.owner)
+      return pending.offerTo ?? otherPlayer(pending.owner)
     case 'mirrorContinue':
       return pending.pactOwner
   }

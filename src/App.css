@@ -1077,9 +1077,10 @@ button.card-passive {
 .battle-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 280px;
-  grid-template-rows: auto auto;
+  grid-template-rows: max-content max-content;
   gap: 0.75rem;
-  align-items: stretch;
+  align-items: start;
+  align-content: start;
 }
 
 .battle-layout > .player-row {
@@ -1101,11 +1102,166 @@ button.card-passive {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: calc(100vh - 5.5rem);
   max-height: calc(100vh - 5.5rem);
   position: sticky;
   top: 0.75rem;
   align-self: start;
+}
+
+.battle-layout-multi {
+  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-rows: max-content max-content;
+  gap: 0.65rem;
+}
+
+.battle-layout-multi > .opponents-rail {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+}
+
+.battle-layout-multi > .player-row.you {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.battle-layout-multi > .center-panel {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  max-height: calc(100vh - 5.5rem);
+}
+
+.opponents-rail {
+  display: grid;
+  gap: 0.55rem;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.opponents-rail[data-seat-count='1'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.opponents-rail[data-seat-count='2'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.opponents-rail[data-seat-count='3'] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.opponents-rail[data-seat-count='4'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.player-row.compact {
+  padding: 0.55rem 0.65rem 0.5rem;
+  background: #141925;
+}
+
+.player-row.compact .player-meta h2 {
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.player-row.compact .player-meta p {
+  margin: 0.12rem 0 0.3rem;
+  font-size: 0.82rem;
+}
+
+.player-row.compact .play-area {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.4rem;
+  align-items: start;
+}
+
+.player-row.compact .field-row {
+  grid-template-columns: repeat(7, minmax(118px, 1fr));
+  gap: 0.4rem;
+  align-items: start;
+  padding: 0 0.2rem 0;
+  scroll-padding-inline: 0.2rem;
+}
+
+.player-row.compact .tcg-card {
+  max-width: 148px;
+  border-radius: 10px;
+  border-width: 2px;
+  box-shadow: 0 3px 0 #0a0d12, 0 6px 12px rgba(0, 0, 0, 0.32);
+}
+
+.player-row.compact .card-face {
+  padding: 0.36rem 0.4rem 0.32rem;
+  font-size: 0.64rem;
+  gap: 0.14rem;
+}
+
+/* Scale via width so the unused transform box does not sit empty under withdrawn cards. */
+.player-row.compact .zone-withdrawn,
+.player-row.compact.foe .zone-withdrawn {
+  transform: none;
+  width: 86%;
+  margin: 0 auto;
+  opacity: 0.88;
+  filter: saturate(0.75);
+}
+
+.player-row.compact .slot-column {
+  gap: 0.2rem;
+}
+
+.player-row.compact .zone-spacer {
+  max-width: 148px;
+}
+
+.player-row.compact .zone-withdrawn .zone-spacer {
+  max-width: none;
+}
+
+.player-row.compact .guard-horizontal {
+  width: 118%;
+}
+
+.seat-discard {
+  align-self: end;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  padding: 0.45rem 0.3rem;
+  border-radius: 8px;
+  border: 1px solid #8a5a3a;
+  background: #1a1614;
+  color: #d4a574;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.seat-discard:hover {
+  filter: brightness(1.1);
+}
+
+.turn-pill {
+  display: inline-block;
+  padding: 0.08rem 0.4rem;
+  border-radius: 999px;
+  background: #2a3f6a;
+  color: #c5d6ff;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.player-row.active-turn {
+  border-color: #5b85ff;
+  box-shadow: 0 0 0 1px rgba(91, 133, 255, 0.35);
+}
+
+.player-row.eliminated {
+  opacity: 0.55;
 }
 
 .prompt {
@@ -1320,6 +1476,33 @@ button.card-passive {
     height: auto;
     max-height: none;
     position: static;
+  }
+
+  .battle-layout-multi {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+  }
+
+  .battle-layout-multi > .opponents-rail {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .battle-layout-multi > .player-row.you {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .battle-layout-multi > .center-panel {
+    grid-column: 1;
+    grid-row: 3;
+    height: auto;
+    max-height: none;
+  }
+
+  .opponents-rail[data-seat-count='3'],
+  .opponents-rail[data-seat-count='4'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .play-area {

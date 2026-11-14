@@ -27,6 +27,8 @@ type Props = {
   extraDefense?: number
   /** ATTACK! and similar team-wide attack bonuses for the card's controller. */
   teamAttackBonus?: number
+  /** Larrathere Knight wind damage from healing on the owner's previous turn. */
+  windDamageBonus?: number
   onPassiveClick?: () => void
 }
 
@@ -41,6 +43,7 @@ export function CardFace({
   onAbilityClick,
   extraDefense = 0,
   teamAttackBonus = 0,
+  windDamageBonus = 0,
   onPassiveClick,
 }: Props) {
   const card = getCard(defId)
@@ -61,6 +64,7 @@ export function CardFace({
       ),
       field,
       teamAttackBonus,
+      windDamageBonus,
     )
     const weaknesses = field?.weaknessOverride
       ? [field.weaknessOverride]
@@ -95,6 +99,7 @@ export function CardFace({
           {field && (field.shadowBonus ?? 0) > 0 ? (
             <span className="tag">shadow +{field.shadowBonus}</span>
           ) : null}
+          {windDamageBonus > 0 ? <span className="tag">wind +{windDamageBonus}</span> : null}
           {identity.darkCharge ? <span className="tag">Dark Charge</span> : null}
           {identity.goldAffinity ? <span className="tag">Gold Affinity</span> : null}
           {field && identity.goldAffinity ? <span>gold {field.gold ?? 0}</span> : null}

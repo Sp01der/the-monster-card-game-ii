@@ -1,8 +1,8 @@
 import { getCard } from './catalog'
-import { defaultRng, makeCard } from './helpers'
+import { asPlayerId, defaultRng, makeCard } from './helpers'
 import { cardIdsFromCounts, STARTERS } from './starters'
 import type { GameState, HandCard, PlayerId, PlayerState } from './types'
-import { FIELD_SIZE, STARTING_HAND, STARTING_POINTS } from './types'
+import { FIELD_SIZE, MAX_PLAYERS, MIN_PLAYERS, STARTING_HAND, STARTING_POINTS } from './types'
 
 export type DeckSetup = {
   name: string
@@ -74,22 +74,48 @@ function buildPlayer(
   }
 }
 
+export type CreateGameOptions = {
+  rng?: () => number
+  random?: () => number
+  shuffleRandom?: () => number
+  /** Skip handoff screen for tests. */
+  skipHandoff?: boolean
+}
+
+/**
+ * Start a match. Two decks keep the classic two-player path.
+ * Pass 3–5 decks for a free-for-all.
+ */
 export function createGame(
   player0: DeckSetup,
   player1: DeckSetup,
-  options?: {
-    rng?: () => number
-    random?: () => number
-    shuffleRandom?: () => number
-    /** Skip handoff screen for tests. */
-    skipHandoff?: boolean
-  },
+  options?: CreateGameOptions,
+): GameState
+export function createGame(decks: DeckSetup[], options?: CreateGameOptions): GameState
+export function createGame(
+  player0OrDecks: DeckSetup | DeckSetup[],
+  player1OrOptions?: DeckSetup | CreateGameOptions,
+  maybeOptions?: CreateGameOptions,
 ): GameState {
+  let decks: DeckSetup[]
+  let options: CreateGameOptions | undefined
+  if (Array.isArray(player0OrDecks)) {
+    decks = player0OrDecks
+    options = player1OrOptions as CreateGameOptions | undefined
+  } else {
+    decks = [player0OrDecks, player1OrOptions as DeckSetup]
+    options = maybeOptions
+  }
+
+  if (decks.length < MIN_PLAYERS || decks.length > MAX_PLAYERS) {
+    throw new Error(`Need ${MIN_PLAYERS}-${MAX_PLAYERS} players, got ${decks.length}`)
+  }
+
   const rng = options?.rng ?? defaultRng()
   const shuffleRandom = options?.shuffleRandom ?? Math.random
 
   const state: GameState = {
-    players: null as unknown as [PlayerState, PlayerState],
+    players: [],
     activePlayer: 0,
     // First player skips draw and begins in main.
     phase: 'main',
@@ -116,17 +142,19 @@ export function createGame(
   }
 
   const shuffleFn = <T>(arr: T[]) => shuffleWith(arr, shuffleRandom)
-  state.players = [
-    buildPlayer(0, player0, state, shuffleFn),
-    buildPlayer(1, player1, state, shuffleFn),
-  ]
+  state.players = decks.map((setup, index) =>
+    buildPlayer(asPlayerId(index), setup, state, shuffleFn),
+  )
 
   state.log.push({
-    message: `Game start. ${state.players[0].name} goes first.`,
+    message: `Game start. ${state.players[0]!.name} goes first.`,
   })
   if (state.awaitingHandoff) {
-    state.openingMulligan = { decided: [false, false], revealed: false }
-    state.log.push({ message: `Pass the device to ${state.players[0].name}.` })
+    state.openingMulligan = {
+      decided: state.players.map(() => false),
+      revealed: false,
+    }
+    state.log.push({ message: `Pass the device to ${state.players[0]!.name}.` })
   }
 
   void shuffle

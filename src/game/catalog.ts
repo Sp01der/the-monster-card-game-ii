@@ -1220,7 +1220,7 @@ export const CATALOG: Record<string, CardDef> = {
     goldAffinity: true,
     abilities: [
       { id: 'raid', name: 'Raid', cost: parseCost('+'), special: 'raid', effects: [] },
-      { id: 'treblae_shot', name: 'Treblae Shot', cost: parseCost('000'),
+      { id: 'treblae_shot', name: 'Treblae Shot', cost: parseCost('0000'),
         effects: [{ type: 'damage', amount: 50 }] },
     ],
   },

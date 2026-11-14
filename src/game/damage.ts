@@ -1,5 +1,10 @@
 import { getMonster, getWeaknesses, identityDefId } from './catalog'
-import { wearsSaphireRing } from './helpers'
+import {
+  isTwoPlayer,
+  nextLivingPlayerId,
+  previousLivingPlayerId,
+  wearsSaphireRing,
+} from './helpers'
 import type {
   DamageType,
   EnergyCost,
@@ -90,6 +95,11 @@ export function prismHarmFaces(monster: FieldMonster | null, faces: number[]): n
 
 export const lensSuccessFaces = prismSuccessFaces
 export const lensHarmFaces = prismHarmFaces
+
+/** +10 wind damage for every 10 HP actually healed on the owner's previous turn. */
+export function knightWindBonus(healedLastTurn: number | undefined): number {
+  return Math.floor((healedLastTurn ?? 0) / 10) * 10
+}
 
 export function attackBonusFor(state: GameState, attacker: FieldMonster | null): number {
   const own = attacker?.attackBonus ?? 0
@@ -290,16 +300,17 @@ function nextOccupied(field: (FieldMonster | null)[], slot: number, step: -1 | 1
 
 /**
  * All living cards form one circle. Same-row neighbors skip empty slots.
- * Each player's leftmost living card is adjacent to the opponent's leftmost,
- * and the same for the rightmost ends.
+ * Two-player: each player's leftmost living card is adjacent to the opponent's
+ * leftmost, and the same for the rightmost ends.
+ * Free-for-all: leftmost touches the previous living seat's rightmost, and
+ * rightmost touches the next living seat's leftmost.
  */
 export function getCircleAdjacent(
   state: GameState,
   playerId: PlayerId,
   slot: number,
 ): TargetRef[] {
-  const player = state.players[playerId]
-  const opponent = state.players[playerId === 0 ? 1 : 0]
+  const player = state.players[playerId]!
   const seen = new Set<string>()
   const result: TargetRef[] = []
   const add = (target: TargetRef) => {
@@ -315,13 +326,36 @@ export function getCircleAdjacent(
   if (right !== null) add({ kind: 'monster', player: playerId, slot: right })
 
   const mine = occupiedSlots(player.field)
-  const theirs = occupiedSlots(opponent.field)
-  if (mine.length > 0 && theirs.length > 0) {
-    if (slot === mine[0]) {
-      add({ kind: 'monster', player: opponent.id, slot: theirs[0] })
+  if (mine.length === 0) return result
+
+  if (isTwoPlayer(state)) {
+    const opponent = state.players[playerId === 0 ? 1 : 0]!
+    const theirs = occupiedSlots(opponent.field)
+    if (theirs.length > 0) {
+      if (slot === mine[0]) {
+        add({ kind: 'monster', player: opponent.id, slot: theirs[0]! })
+      }
+      if (slot === mine[mine.length - 1]) {
+        add({ kind: 'monster', player: opponent.id, slot: theirs[theirs.length - 1]! })
+      }
     }
-    if (slot === mine[mine.length - 1]) {
-      add({ kind: 'monster', player: opponent.id, slot: theirs[theirs.length - 1] })
+    return result
+  }
+
+  const prevId = previousLivingPlayerId(state, playerId)
+  const nextId = nextLivingPlayerId(state, playerId)
+  if (prevId !== playerId) {
+    const prev = state.players[prevId]!
+    const prevSlots = occupiedSlots(prev.field)
+    if (prevSlots.length > 0 && slot === mine[0]) {
+      add({ kind: 'monster', player: prevId, slot: prevSlots[prevSlots.length - 1]! })
+    }
+  }
+  if (nextId !== playerId) {
+    const next = state.players[nextId]!
+    const nextSlots = occupiedSlots(next.field)
+    if (nextSlots.length > 0 && slot === mine[mine.length - 1]) {
+      add({ kind: 'monster', player: nextId, slot: nextSlots[0]! })
     }
   }
   return result
