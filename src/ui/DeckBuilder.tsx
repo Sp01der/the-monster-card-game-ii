@@ -81,6 +81,7 @@ const TYPE_FILTERS: { id: CardSearchType; label: string; group: 'Damage' | 'Fami
   { id: 'blob', label: 'Blob', group: 'Family' },
   { id: 'dark_charge', label: 'Dark Charge', group: 'Trait' },
   { id: 'gold_affinity', label: 'Gold Affinity', group: 'Trait' },
+  { id: 'enchantment', label: 'Enchantment', group: 'Trait' },
 ]
 
 function draftToSetup(draft: Draft): DeckSetup {

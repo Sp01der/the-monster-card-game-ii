@@ -350,6 +350,8 @@ export function effectTargetOptions(state: GameState, effectId: string): TargetR
       }
       return pairs
     }
+    case 'energySurge':
+      return anyMonsterTargets(state).map((target) => [target])
     case 'rewind':
       return anyCardTargets(state).map((target) => [target])
     case 'inversion': {

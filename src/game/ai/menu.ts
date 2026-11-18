@@ -23,6 +23,16 @@ export function getToggleMenu(state: GameState): ToggleMenu | null {
   const pending = state.pending
   if (!pending) return null
 
+  if (pending.kind === 'handDiscardAny') {
+    const owner = state.players[pending.owner]
+    return {
+      options: owner.hand.map((card) => card.instanceId),
+      selected: [...pending.chosenInstanceIds],
+      toggle: (instanceId) => ({ type: 'DISCARD_ANY_TOGGLE', instanceId }),
+      finish: { type: 'DISCARD_ANY_FINISH' },
+    }
+  }
+
   if (pending.kind === 'bury') {
     const owner = state.players[pending.owner]
     return {

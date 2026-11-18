@@ -62,6 +62,9 @@ function pendingDecisionPlayer(pending: PendingInteraction): PlayerId {
     case 'cloudDestroy':
     case 'cloudBless':
     case 'riftEye':
+    case 'handDiscardAny':
+    case 'alchemyChoice':
+    case 'forge':
       return pending.owner
     case 'multiHit':
     case 'stormType':

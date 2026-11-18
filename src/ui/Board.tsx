@@ -318,6 +318,26 @@ function describeAction(state: GameState, action: GameAction): string {
       return 'Do not shoot'
     case 'WISDOM_ENERGY':
       return 'Give 1 energy'
+    case 'DISCARD_ANY_TOGGLE':
+      return 'Select card to discard'
+    case 'DISCARD_ANY_FINISH':
+      return 'Finish discarding'
+    case 'ALCHEMY_MODE':
+      return action.mode === 'damage'
+        ? '10 water damage'
+        : action.mode === 'heal'
+          ? 'Heal 10 HP'
+          : action.mode === 'cleanse'
+            ? 'Remove a status'
+            : 'Add 1 energy'
+    case 'ALCHEMY_TARGET':
+      return 'Choose target'
+    case 'ALCHEMY_STATUS':
+      return 'Remove this status'
+    case 'FORGE_PICK':
+      return `Create ${getCard(action.defId).name}`
+    case 'FORGE_ATTACH':
+      return 'Attach the equipment'
     case 'CHOOSE_OPPONENT':
       return `Choose ${state.players[action.player]!.name}`
   }
@@ -372,15 +392,23 @@ export function Board({
 
   useEffect(() => {
     const pending = state.pending
-    if (pending?.kind !== 'playCards' || !pending.effectsOnly || !pending.preferredInstanceId) {
-      if (pending?.kind !== 'playCards') spellSelectKey.current = null
+    const preferredId =
+      pending?.kind === 'playCards' && pending.effectsOnly
+        ? pending.preferredInstanceId
+        : pending?.kind === 'replayEffect'
+          ? pending.instanceId
+          : undefined
+    if (!preferredId || (pending?.kind !== 'playCards' && pending?.kind !== 'replayEffect')) {
+      if (pending?.kind !== 'playCards' && pending?.kind !== 'replayEffect') {
+        spellSelectKey.current = null
+      }
       return
     }
-    const key = pending.preferredInstanceId
+    const key = `${pending.kind}:${preferredId}`
     if (spellSelectKey.current === key) return
     spellSelectKey.current = key
     const owner = state.players[pending.owner]
-    const handIndex = owner.hand.findIndex((card) => card.instanceId === key)
+    const handIndex = owner.hand.findIndex((card) => card.instanceId === preferredId)
     if (handIndex < 0) return
     const needsTarget = legal.some(
       (action) =>
@@ -682,6 +710,24 @@ export function Board({
   } else if (state.pending?.kind === 'rainGoo') {
     prompt = `Choose Goo target (${state.pending.remaining} remaining).`
     for (const a of legal) if (a.type === 'RAIN_GOO_TARGET') highlightTargets.add(targetKey(a.target))
+  } else if (state.pending?.kind === 'handDiscardAny') {
+    prompt = `Discard any number of cards (${state.pending.chosenInstanceIds.length} selected).`
+  } else if (state.pending?.kind === 'alchemyChoice' && state.pending.stage === 'mode') {
+    prompt = `Choose one result for a discarded card (${state.pending.remaining} remaining).`
+  } else if (state.pending?.kind === 'alchemyChoice' && state.pending.stage === 'status') {
+    prompt = 'Choose which status to remove.'
+  } else if (state.pending?.kind === 'alchemyChoice') {
+    prompt = 'Choose the card for this result.'
+    for (const action of legal) {
+      if (action.type === 'ALCHEMY_TARGET') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'forge' && state.pending.stage === 'equipment') {
+    prompt = 'Choose an equipment card to create.'
+  } else if (state.pending?.kind === 'forge') {
+    prompt = 'Choose a monster to attach it to.'
+    for (const action of legal) {
+      if (action.type === 'FORGE_ATTACH') highlightTargets.add(targetKey(action.target))
+    }
   } else if (state.pending?.kind === 'bury') {
     prompt = `Choose cards to bury (${state.pending.chosenInstanceIds.length} selected).`
   } else if (state.pending?.kind === 'eldersEye') {
@@ -1063,6 +1109,20 @@ export function Board({
     }
     if (state.pending?.kind === 'march' && playerId === state.pending.owner) {
       const action = legal.find((a) => a.type === 'MARCH_TOGGLE' && a.slot === slot)
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'alchemyChoice' && state.pending.stage === 'target') {
+      const action = legal.find(
+        (a) => a.type === 'ALCHEMY_TARGET' && actionsEqualTargets(a.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'forge' && state.pending.stage === 'target') {
+      const action = legal.find(
+        (a) => a.type === 'FORGE_ATTACH' && actionsEqualTargets(a.target, clicked),
+      )
       if (action) dispatch(action)
       return
     }
@@ -1561,6 +1621,11 @@ export function Board({
       if (action) dispatch(action)
       return
     }
+    if (state.pending?.kind === 'alchemyChoice' && state.pending.stage === 'target') {
+      const action = legal.find((a) => a.type === 'ALCHEMY_TARGET' && actionsEqualTargets(a.target, t))
+      if (action) dispatch(action)
+      return
+    }
     if (state.pending?.kind === 'fairyHeal') {
       const action = legal.find(
         (a) => a.type === 'FAIRY_HEAL' && actionsEqualTargets(a.target, t),
@@ -1656,6 +1721,10 @@ export function Board({
       : null
   const buryPending =
     state.pending?.kind === 'bury' && humanOwnedPending(state.pending.owner)
+      ? state.pending
+      : null
+  const discardAnyPending =
+    state.pending?.kind === 'handDiscardAny' && humanOwnedPending(state.pending.owner)
       ? state.pending
       : null
   const discardPickPending =
@@ -2129,6 +2198,62 @@ export function Board({
           </div>
         )}
 
+        {state.pending?.kind === 'alchemyChoice' && state.pending.stage === 'mode' && (
+          <div className="ability-choice">
+            <h3>Ocean Alchemy</h3>
+            <div className="chip-row">
+              {legal
+                .filter((action) => action.type === 'ALCHEMY_MODE')
+                .map((action) =>
+                  action.type === 'ALCHEMY_MODE' ? (
+                    <button key={action.mode} type="button" className="chip" onClick={() => dispatch(action)}>
+                      {describeAction(state, action)}
+                    </button>
+                  ) : null,
+                )}
+            </div>
+          </div>
+        )}
+
+        {state.pending?.kind === 'alchemyChoice' && state.pending.stage === 'status' && (
+          <div className="ability-choice">
+            <h3>Remove a status</h3>
+            <div className="chip-row">
+              {legal
+                .filter((action) => action.type === 'ALCHEMY_STATUS')
+                .map((action) => {
+                  if (action.type !== 'ALCHEMY_STATUS' || state.pending?.kind !== 'alchemyChoice') return null
+                  const monster = state.pending.target
+                    ? state.players[state.pending.target.player].field[state.pending.target.slot]
+                    : null
+                  const status = monster?.statuses[action.index]
+                  return (
+                    <button key={action.index} type="button" className="chip" onClick={() => dispatch(action)}>
+                      {status?.kind ?? 'Remove this status'}
+                    </button>
+                  )
+                })}
+            </div>
+          </div>
+        )}
+
+        {state.pending?.kind === 'forge' && state.pending.stage === 'equipment' && (
+          <div className="ability-choice">
+            <h3>Master of the Forge</h3>
+            <div className="chip-row">
+              {legal
+                .filter((action) => action.type === 'FORGE_PICK')
+                .map((action) =>
+                  action.type === 'FORGE_PICK' ? (
+                    <button key={action.defId} type="button" className="chip" onClick={() => dispatch(action)}>
+                      {describeAction(state, action)}
+                    </button>
+                  ) : null,
+                )}
+            </div>
+          </div>
+        )}
+
         {state.pending?.kind === 'hoardChoice' && (
           <div className="ability-choice">
             <h3>Treasure Hoard</h3>
@@ -2525,6 +2650,38 @@ export function Board({
                 ) : null,
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {discardAnyPending && (
+        <div className="modal-backdrop">
+          <div className="modal-panel" role="dialog" aria-label="Discard any number of cards">
+            <header className="modal-header">
+              <h2>Discard any number of cards</h2>
+              <button type="button" className="primary" onClick={() => dispatch({ type: 'DISCARD_ANY_FINISH' })}>
+                Discard {discardAnyPending.chosenInstanceIds.length}
+              </button>
+            </header>
+            {state.players[discardAnyPending.owner].hand.length === 0 ? (
+              <p className="muted">Your hand is empty. Choose “Discard 0” to continue.</p>
+            ) : (
+              <div className="discard-grid">
+                {state.players[discardAnyPending.owner].hand.map((card) => {
+                  const selected = discardAnyPending.chosenInstanceIds.includes(card.instanceId)
+                  return (
+                    <button
+                      key={card.instanceId}
+                      type="button"
+                      className={`tcg-card kind-${getCard(card.defId).kind}${selected ? ' selected' : ''}`}
+                      onClick={() => dispatch({ type: 'DISCARD_ANY_TOGGLE', instanceId: card.instanceId })}
+                    >
+                      <CardFace defId={card.defId} />
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

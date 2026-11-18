@@ -167,11 +167,59 @@ describe('Shifting Reality', () => {
           candidate.targets.some((target) => target.kind === 'monster' && target.slot === 0 && target.player === 0),
       ),
     )
-    expect(next.players[0].field[0]!.hp).toBe(70)
-    expect(next.pending).toBeNull()
+    expect(next.players[0].field[0]!.hp).toBe(40)
+    expect(next.pending).toMatchObject({ kind: 'replayEffect', instanceId: 'potion' })
     expect(next.playedCardThisTurn).toBe(true)
     expect(next.cardsPlayedThisTurn).toBe(1)
+    next = applyAction(
+      next,
+      action(
+        next,
+        (candidate) =>
+          candidate.type === 'PLAY_EFFECT' &&
+          candidate.targets.some((target) => target.kind === 'monster' && target.slot === 0 && target.player === 0),
+      ),
+    )
+    expect(next.players[0].field[0]!.hp).toBe(70)
+    expect(next.pending).toBeNull()
+    expect(next.cardsPlayedThisTurn).toBe(1)
     expect(next.players[0].discard.some((card) => card.defId === 'health_potion')).toBe(true)
+  })
+
+  it('lets each Recursion replay choose fresh targets', () => {
+    const state = main(game())
+    put(state.players[0], 0, 'blob', { hp: 80, maxHp: 80, instanceId: 'ally' })
+    put(state.players[1], 0, 'blob', { hp: 80, maxHp: 80, instanceId: 'foe' })
+    state.players[0].hand = [
+      { instanceId: 'loop', defId: 'recursion' },
+      { instanceId: 'archer', defId: 'long_range_archer' },
+    ]
+    let next = applyAction(state, action(state, (candidate) => candidate.type === 'PLAY_EFFECT' && candidate.handIndex === 0))
+    next = applyAction(
+      next,
+      action(
+        next,
+        (candidate) =>
+          candidate.type === 'PLAY_EFFECT' &&
+          candidate.targets.some((target) => target.kind === 'monster' && target.player === 1 && target.slot === 0),
+      ),
+    )
+    expect(next.players[1].field[0]!.hp).toBe(60)
+    expect(next.players[0].field[0]!.hp).toBe(80)
+    expect(next.pending).toMatchObject({ kind: 'replayEffect', instanceId: 'archer' })
+    next = applyAction(
+      next,
+      action(
+        next,
+        (candidate) =>
+          candidate.type === 'PLAY_EFFECT' &&
+          candidate.targets.some((target) => target.kind === 'monster' && target.player === 0 && target.slot === 0),
+      ),
+    )
+    expect(next.players[1].field[0]!.hp).toBe(60)
+    expect(next.players[0].field[0]!.hp).toBe(60)
+    expect(next.pending).toBeNull()
+    expect(next.recursion).toBeUndefined()
   })
 
   it('replays the watched effect immediately, even while Starlight Portal is still open', () => {
@@ -188,6 +236,17 @@ describe('Shifting Reality', () => {
     next = applyAction(next, action(next, (candidate) => candidate.type === 'PLAY_EFFECT' && candidate.targets.length === 0))
     expect(next.playedCardThisTurn).toBe(true)
     expect(next.recursion?.charges).toBe(1)
+    next = applyAction(
+      next,
+      action(
+        next,
+        (candidate) =>
+          candidate.type === 'PLAY_EFFECT' &&
+          candidate.targets.some((target) => target.kind === 'monster' && target.player === 0 && target.slot === 0),
+      ),
+    )
+    expect(next.players[0].field[0]!.hp).toBe(40)
+    expect(next.pending).toMatchObject({ kind: 'replayEffect', instanceId: 'potion' })
     next = applyAction(
       next,
       action(
@@ -225,8 +284,10 @@ describe('Shifting Reality', () => {
       ),
     )
     expect(next.players[0].field[0]!.hp).toBe(40)
-    expect(next.pending).toMatchObject({ kind: 'playCards', from: 'discard', limit: 1 })
+    expect(next.pending).toMatchObject({ kind: 'replayEffect', instanceId: 'portal' })
     expect(next.cardsPlayedThisTurn).toBe(1)
+    next = applyAction(next, action(next, (candidate) => candidate.type === 'PLAY_EFFECT' && !candidate.fromDiscard))
+    expect(next.pending).toMatchObject({ kind: 'playCards', from: 'discard', limit: 1 })
     next = applyAction(
       next,
       action(
@@ -253,6 +314,8 @@ describe('Shifting Reality', () => {
     let next = applyAction(state, action(state, (candidate) => candidate.type === 'PLAY_EFFECT' && candidate.handIndex === 0))
     next = applyAction(next, action(next, (candidate) => candidate.type === 'PLAY_EFFECT' && candidate.handIndex === 0))
     next = applyAction(next, action(next, (candidate) => candidate.type === 'PLAY_EFFECT' && candidate.fromDiscard === true))
+    expect(next.pending).toMatchObject({ kind: 'replayEffect', instanceId: 'portal' })
+    next = applyAction(next, action(next, (candidate) => candidate.type === 'PLAY_EFFECT' && !candidate.fromDiscard))
     expect(next.pending).toMatchObject({ kind: 'playCards', from: 'discard', limit: 1 })
     next = applyAction(next, { type: 'PORTAL_FINISH' })
     expect(next.pending).toBeNull()

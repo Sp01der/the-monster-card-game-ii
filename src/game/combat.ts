@@ -11,6 +11,7 @@ import {
   log,
   recordHeal,
   resolveTarget,
+  wakeAsleep,
 } from './helpers'
 import type {
   AbilityChoice,
@@ -191,6 +192,7 @@ export function dealDamageToTarget(
         ? `${resolved.player.name}'s Ice Mirror reflects the attack; ${getMonster(attacker.defId).name} endures at ${attacker.hp} HP.`
         : `${resolved.player.name}'s Ice Mirror reflects the attack; ${getMonster(attacker.defId).name} takes ${amount} damage (${Math.max(0, attacker.hp)} HP left).`,
     )
+    if (amount > 0 && (endured || attacker.hp > 0)) wakeAsleep(state, attacker, amount)
     if (!endured && attacker.hp <= 0 && attackerSlot >= 0) {
       discardMonster(state, attackerOwner, attackerSlot, 'slain', resolved.player.id)
     }
@@ -266,6 +268,7 @@ export function dealDamageToTarget(
     resolved.monster.statuses = resolved.monster.statuses.filter((status) => status.kind !== 'stone')
     log(state, `The blast breaks the Stone on ${getMonster(resolved.monster.defId).name}.`)
   }
+  if (amount > 0 && (endured || resolved.monster.hp > 0)) wakeAsleep(state, resolved.monster, amount)
   if (amount > 0 && hitTypes.includes('electric') && resolved.monster.defId === 'lightning_worm') {
     if (grantEnergy(state, resolved.monster, 1) > 0) {
       log(state, 'Lightning Worm gains 1 energy from the electric attack.')

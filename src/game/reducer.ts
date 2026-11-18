@@ -61,6 +61,7 @@ import {
   liftEquipment,
   liftMonster,
   clearNegativeStatuses,
+  isAsleep,
   isClinged,
   isGooed,
   log,
@@ -77,9 +78,11 @@ import {
   randomRunestone,
   recordHeal,
   removeMonsterWithoutPoints,
+  retireEquipment,
   resolveTarget,
   rollDie,
   spendEnergy,
+  wakeAsleep,
   targetFromInstanceId,
   targetInstanceId,
 } from './helpers'
@@ -475,7 +478,34 @@ function resolveEndStep(state: GameState): void {
   queueArrowShots(state)
 }
 
+function healSleepers(state: GameState): void {
+  for (const side of state.players) {
+    for (const monster of side.field) {
+      if (!monster || !isAsleep(monster)) continue
+      const before = monster.hp
+      monster.hp = Math.min(monster.maxHp, monster.hp + 10)
+      recordHeal(state, monster.hp - before)
+      if (monster.hp !== before) {
+        log(state, `${getMonster(monster.defId).name} heals 10 while asleep (now ${monster.hp} HP).`)
+      }
+    }
+  }
+}
+
+function applyScheduledSleep(state: GameState, playerId: PlayerId): void {
+  for (const side of state.players) {
+    for (const monster of side.field) {
+      if (!monster || monster.sleepOnTurn !== playerId) continue
+      monster.sleepOnTurn = undefined
+      if (applyStatus(monster, 'asleep', 0, 1, undefined, false, playerId)) {
+        log(state, `${getMonster(monster.defId).name} falls asleep.`)
+      }
+    }
+  }
+}
+
 function tickStatuses(state: GameState): void {
+  healSleepers(state)
   const player = activePlayer(state)
   for (let slot = 0; slot < player.field.length; slot++) {
     const monster = player.field[slot]
@@ -487,8 +517,9 @@ function tickStatuses(state: GameState): void {
 
     const nextStatuses = []
     let slainBy: PlayerId | undefined
+    let woke = false
     for (const status of [...monster.statuses]) {
-      if (status.kind === 'goo' || status.kind === 'cling' || status.kind === 'stone') {
+      if (status.kind === 'goo' || status.kind === 'cling' || status.kind === 'stone' || status.kind === 'asleep') {
         nextStatuses.push(status)
         continue
       }
@@ -505,6 +536,7 @@ function tickStatuses(state: GameState): void {
         const endured = monster.unending && monster.hp - 20 <= 0
         if (endured) monster.hp = Math.min(monster.maxHp, 10)
         else monster.hp -= 20
+        if (wakeAsleep(state, monster, 20)) woke = true
         log(
           state,
           endured
@@ -518,6 +550,7 @@ function tickStatuses(state: GameState): void {
         const endured = monster.unending && monster.hp - damage <= 0
         if (endured) monster.hp = Math.min(monster.maxHp, 10)
         else monster.hp -= damage
+        if (wakeAsleep(state, monster, damage)) woke = true
         log(
           state,
           endured
@@ -533,7 +566,7 @@ function tickStatuses(state: GameState): void {
         log(state, `${status.kind} wore off on ${getMonster(monster.defId).name}.`)
       }
     }
-    monster.statuses = nextStatuses
+    monster.statuses = woke ? nextStatuses.filter((status) => status.kind !== 'asleep') : nextStatuses
 
     if (monster.hp <= 0) {
       discardMonster(state, player, slot, 'slain', slainBy)
@@ -662,6 +695,7 @@ function passTurn(state: GameState): void {
     state.drewThisTurn = false
     state.abilityUsesLeft = 0
     state.actedSlots = []
+    applyScheduledSleep(state, player.id)
     expireStalks(state, player.id)
     if (player.silenceNextTurn) {
       player.blockEffects = true
@@ -688,6 +722,7 @@ function passTurn(state: GameState): void {
   state.awaitingHandoff = true
 
   const nextPlayer = activePlayer(state)
+  applyScheduledSleep(state, nextPlayer.id)
   expireStalks(state, nextPlayer.id)
   if (nextPlayer.silenceNextTurn) {
     nextPlayer.blockEffects = true
@@ -2231,6 +2266,68 @@ function resolveSpecialAbility(
         }
       }
       break
+    case 'blast':
+      resolveRocket(state, attacker, target, requiredEnergy)
+      break
+    case 'druggedSuck': {
+      const before = targetMonster(state, target)
+      const alreadyAsleep = Boolean(before && isAsleep(before))
+      if (target) dealDamageToTarget(state, attacker, target, 10, 'untyped', false, requiredEnergy)
+      const after = target ? targetMonster(state, target) : null
+      if (
+        after &&
+        target?.kind === 'monster' &&
+        applyStatus(after, 'asleep', 0, 1, undefined, target.player === state.activePlayer, player.id)
+      ) {
+        log(state, `${getMonster(after.defId).name} falls asleep.`)
+      }
+      const living = player.field[slot]
+      if (living && living.instanceId === attacker.instanceId) {
+        const amount = alreadyAsleep ? 20 : 10
+        const beforeHp = living.hp
+        living.hp = Math.min(living.maxHp, living.hp + amount)
+        recordHeal(state, living.hp - beforeHp)
+        log(state, `${getMonster(living.defId).name} heals ${living.hp - beforeHp} HP.`)
+      }
+      break
+    }
+    case 'oceanAlchemy':
+      state.pending = {
+        kind: 'handDiscardAny',
+        owner: player.id,
+        slot,
+        chosenInstanceIds: [],
+        purpose: 'alchemy',
+        requiredEnergy,
+      }
+      log(state, 'Discard any number of cards.')
+      break
+    case 'overseasTrading':
+      state.pending = {
+        kind: 'handDiscardAny',
+        owner: player.id,
+        slot,
+        chosenInstanceIds: [],
+        purpose: 'trading',
+        requiredEnergy,
+      }
+      log(state, 'Discard any number of cards.')
+      break
+    case 'magneticBomb': {
+      const host = targetMonster(state, target)
+      if (!host) break
+      attachCreatedEquipment(state, host, 'gnome_bomb')
+      break
+    }
+    case 'detonate':
+      detonateBombs(state, attacker, requiredEnergy)
+      break
+    case 'masterOfTheForge':
+      if ((attacker.gold ?? 0) < 2) break
+      attacker.gold = (attacker.gold ?? 0) - 2
+      state.pending = { kind: 'forge', owner: player.id, stage: 'equipment' }
+      log(state, `${getMonster(attacker.defId).name} spends 2 gold to work the forge.`)
+      break
     case 'buriedAlive': {
       const victim = targetMonster(state, target)
       if (!victim) break
@@ -2336,6 +2433,40 @@ function applyPlasmaRoll(state: GameState): void {
   }
 }
 
+function detonateBombs(state: GameState, attacker: FieldMonster, requiredEnergy: number): void {
+  const shots: { owner: PlayerState; host: TargetRef; adjacent: TargetRef[]; card: { instanceId: string; defId: string } }[] = []
+  for (const side of state.players) {
+    for (let slot = 0; slot < side.field.length; slot++) {
+      const monster = side.field[slot]
+      if (!monster) continue
+      for (let index = monster.equipment.length - 1; index >= 0; index--) {
+        const equipment = monster.equipment[index]
+        if (!equipment || equipment.defId !== 'gnome_bomb') continue
+        shots.push({
+          owner: side,
+          host: { kind: 'monster', player: side.id, slot },
+          adjacent: getCircleAdjacent(state, side.id, slot),
+          card: { instanceId: equipment.instanceId, defId: equipment.defId },
+        })
+        monster.equipment.splice(index, 1)
+      }
+    }
+  }
+  if (shots.length === 0) {
+    log(state, 'No Gnome Bombs are in play.')
+    return
+  }
+  for (const shot of shots) {
+    dealDamageToTarget(state, attacker, shot.host, 60, 'blast', false, requiredEnergy)
+    for (const adjacent of shot.adjacent) {
+      if (!targetMonster(state, adjacent)) continue
+      dealDamageToTarget(state, attacker, adjacent, 30, 'blast', false, requiredEnergy)
+    }
+    shot.owner.removed.push(shot.card)
+    log(state, 'Gnome Bomb is Removed.')
+  }
+}
+
 function resolveRocket(
   state: GameState,
   attacker: FieldMonster,
@@ -2437,15 +2568,19 @@ function bounceToHand(state: GameState, target: TargetRef): void {
     if (!equipment) return
     if (equipment.defId === 'resilience') removeResilience(resolved.monster)
     resolved.monster.equipment.splice(target.equipmentIndex, 1)
-    owner.hand.push({ instanceId: equipment.instanceId, defId: equipment.defId })
-    log(state, `${getCard(equipment.defId).name} returns to ${owner.name}'s hand.`)
+    const equipmentDef = getCard(equipment.defId)
+    if (equipmentDef.kind === 'equipment' && equipmentDef.removeOnLeave) {
+      retireEquipment(owner, equipment)
+      log(state, `${equipmentDef.name} is Removed.`)
+    } else {
+      owner.hand.push({ instanceId: equipment.instanceId, defId: equipment.defId })
+      log(state, `${getCard(equipment.defId).name} returns to ${owner.name}'s hand.`)
+    }
     return
   }
   const monster = resolved.monster
   if (monster.protectingInstanceId) releaseProtection(state, monster)
-  for (const equipment of [...monster.equipment]) {
-    owner.discard.push({ instanceId: equipment.instanceId, defId: equipment.defId })
-  }
+  for (const equipment of [...monster.equipment]) retireEquipment(owner, equipment)
   monster.equipment = []
   owner.hand.push({ instanceId: monster.instanceId, defId: monster.defId })
   owner.field[resolved.slot] = null
@@ -2480,6 +2615,18 @@ function playEffect(
     case 'heal_30':
       healTarget(state, targets[0], 30)
       break
+    case 'energySurge': {
+      const resolved = resolveTarget(state, targets[0])
+      if (!resolved || targets[0]?.kind !== 'monster') break
+      grantEnergy(state, resolved.monster, 1)
+      resolved.monster.energy *= 2
+      resolved.monster.sleepOnTurn = player.id
+      log(
+        state,
+        `${getMonster(resolved.monster.defId).name} now has ${resolved.monster.energy} energy and falls asleep at the start of ${player.name}'s next turn.`,
+      )
+      break
+    }
     case 'energy_3': {
       const resolved = resolveTarget(state, targets[0])
       if (resolved && targets[0].kind === 'monster' && grantEnergy(state, resolved.monster, 3) > 0) {
@@ -2767,7 +2914,6 @@ function playEffect(
     state.recursion.watchId = card.instanceId
     state.recursion.replaysLeft = state.recursion.charges
     state.recursion.charges = 0
-    state.recursion.targets = structuredClone(targets)
     state.recursion.generation = (state.recursion.generation ?? 0) + 1
   }
   const spellSource = opening?.spellSourceInstanceId
@@ -3116,12 +3262,17 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
         beforePending?.kind === 'playCards' || beforePending?.kind === 'replayEffect'
           ? next.players[beforePending.owner]
           : player
+      if (beforePending?.kind === 'replayEffect' && next.recursion) {
+        next.recursion.replayingNow = true
+        next.recursion.replaysLeft = Math.max(0, next.recursion.replaysLeft - 1)
+      }
       if (beforePending?.spellSourceInstanceId) {
         next.spellSourceInstanceId = beforePending.spellSourceInstanceId
       }
       playEffect(next, action.handIndex, action.targets, action.fromDiscard === true, actor)
+      if (next.recursion) next.recursion.replayingNow = false
       if (beforePending?.kind === 'replayEffect' && next.pending === beforePending) {
-        next.pending = null
+        clearPending(next)
       }
       resumePlayCardsAfter(next, beforePending)
       break
@@ -4438,6 +4589,119 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       if (pending.remaining <= 0) clearPending(next)
       break
     }
+    case 'DISCARD_ANY_TOGGLE': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'handDiscardAny') break
+      const index = pending.chosenInstanceIds.indexOf(action.instanceId)
+      if (index >= 0) pending.chosenInstanceIds.splice(index, 1)
+      else pending.chosenInstanceIds.push(action.instanceId)
+      break
+    }
+    case 'DISCARD_ANY_FINISH': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'handDiscardAny') break
+      const owner = next.players[pending.owner]
+      const chosenIds = new Set(pending.chosenInstanceIds)
+      const chosen = owner.hand.filter((card) => chosenIds.has(card.instanceId))
+      owner.hand = owner.hand.filter((card) => !chosenIds.has(card.instanceId))
+      owner.discard.push(...chosen)
+      log(next, `${owner.name} discards ${chosen.length} card${chosen.length === 1 ? '' : 's'}.`)
+      if (pending.purpose === 'trading') {
+        clearPending(next)
+        beginAssignGold(next, owner, chosen.length * 2)
+        break
+      }
+      if (chosen.length === 0) {
+        clearPending(next)
+        break
+      }
+      next.pending = {
+        kind: 'alchemyChoice',
+        owner: pending.owner,
+        slot: pending.slot,
+        remaining: chosen.length,
+        stage: 'mode',
+        requiredEnergy: pending.requiredEnergy,
+      }
+      log(next, `Choose one result for a discarded card (${chosen.length} remaining).`)
+      break
+    }
+    case 'ALCHEMY_MODE': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'alchemyChoice' || pending.stage !== 'mode') break
+      pending.mode = action.mode
+      pending.stage = 'target'
+      pending.target = undefined
+      break
+    }
+    case 'ALCHEMY_TARGET': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'alchemyChoice' || pending.stage !== 'target' || !pending.mode) break
+      if (pending.mode === 'cleanse') {
+        const monster = targetMonster(next, action.target)
+        if (monster && monster.statuses.length > 0 && action.target.kind === 'monster') {
+          pending.target = action.target
+          pending.stage = 'status'
+          break
+        }
+      } else if (pending.mode === 'damage') {
+        const brewer = next.players[pending.owner].field[pending.slot] ?? null
+        dealDamageToTarget(next, brewer, action.target, 10, 'water', false, pending.requiredEnergy)
+      } else if (pending.mode === 'heal') {
+        healTarget(next, action.target, 10)
+      } else if (pending.mode === 'energy') {
+        const monster = targetMonster(next, action.target)
+        if (monster && grantEnergy(next, monster, 1) > 0) {
+          log(next, `${getMonster(monster.defId).name} gains 1 energy.`)
+        }
+      }
+      pending.remaining -= 1
+      if (pending.remaining <= 0) clearPending(next)
+      else {
+        pending.stage = 'mode'
+        pending.mode = undefined
+        pending.target = undefined
+        log(next, `Choose one result for a discarded card (${pending.remaining} remaining).`)
+      }
+      break
+    }
+    case 'ALCHEMY_STATUS': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'alchemyChoice' || pending.stage !== 'status') break
+      const monster = targetMonster(next, pending.target)
+      const status = monster?.statuses[action.index]
+      if (monster && status) {
+        monster.statuses.splice(action.index, 1)
+        log(next, `${status.kind} is removed from ${getMonster(monster.defId).name}.`)
+      }
+      pending.remaining -= 1
+      if (pending.remaining <= 0) clearPending(next)
+      else {
+        pending.stage = 'mode'
+        pending.mode = undefined
+        pending.target = undefined
+        log(next, `Choose one result for a discarded card (${pending.remaining} remaining).`)
+      }
+      break
+    }
+    case 'FORGE_PICK': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'forge' || pending.stage !== 'equipment') break
+      const def = getCard(action.defId)
+      if (def.kind !== 'equipment' || def.createdOnly || def.enchantment) break
+      pending.defId = action.defId
+      pending.stage = 'target'
+      log(next, `Choose a monster for ${def.name}.`)
+      break
+    }
+    case 'FORGE_ATTACH': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'forge' || pending.stage !== 'target' || !pending.defId) break
+      const monster = targetMonster(next, action.target)
+      if (monster) attachCreatedEquipment(next, monster, pending.defId, 10)
+      clearPending(next)
+      break
+    }
     case 'END_TURN': {
       if (next.phase === 'energy') {
         finishEnergyPhase(next)
@@ -4540,7 +4804,6 @@ function releaseRecursionWatch(state: GameState): void {
   const job = state.recursion
   if (!job) return
   job.watchId = undefined
-  job.targets = undefined
   job.generation = undefined
   job.replayingNow = false
   job.replaysLeft = 0
@@ -4555,6 +4818,7 @@ function continueRecursion(state: GameState): void {
     releaseRecursionWatch(state)
     return
   }
+  if (state.pending?.kind === 'replayEffect') return
   const player = state.players[job.owner]
   const card = takeWatchedCard(state, job.watchId)
   if (!card) {
@@ -4562,21 +4826,13 @@ function continueRecursion(state: GameState): void {
     return
   }
   player.hand.push(card)
-  const savedPending = state.pending
-  const known = pendingUidSet(state)
-  job.replayingNow = true
-  job.replaysLeft -= 1
-  playEffect(state, player.hand.length - 1, job.targets ?? [], false, player)
-  job.replayingNow = false
-  if (savedPending && state.pending !== savedPending) {
-    if (state.pending === null) state.pending = savedPending
-    else state.pendingStack.push(savedPending)
+  if (state.pending) state.pendingStack.push(state.pending)
+  state.pending = {
+    kind: 'replayEffect',
+    owner: job.owner,
+    instanceId: card.instanceId,
+    recursionGen: job.generation,
   }
   stampPendingUids(state)
-  tagFreshPendings(state, known, job.generation)
-  log(state, `${getCard(card.defId).name} is played again.`)
-  if (!job.watchId || job.generation === undefined) return
-  if (!watchedEffectSettled(state, job.generation)) return
-  if (job.replaysLeft <= 0) releaseRecursionWatch(state)
-  else continueRecursion(state)
+  log(state, `Play ${getCard(card.defId).name} again.`)
 }

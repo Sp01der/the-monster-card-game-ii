@@ -1235,7 +1235,7 @@ export const CATALOG: Record<string, CardDef> = {
   },
   pegasus_gift: {
     kind: 'equipment', id: 'pegasus_gift', name: 'Pegasus Gift', maxHp: 20,
-    equipmentId: 'pegasusGift',
+    equipmentId: 'pegasusGift', enchantment: true,
   },
   haunted_mists: {
     kind: 'effect', id: 'haunted_mists', name: 'Haunted Mists', effectId: 'hauntedMists',
@@ -1288,15 +1288,15 @@ export const CATALOG: Record<string, CardDef> = {
   },
   resilience: {
     kind: 'equipment', id: 'resilience', name: 'Resilience', maxHp: 20,
-    equipmentId: 'resilience', createdOnly: true, attackProof: true,
+    equipmentId: 'resilience', createdOnly: true, attackProof: true, enchantment: true,
   },
   strength: {
     kind: 'equipment', id: 'strength', name: 'Strength', maxHp: 20,
-    equipmentId: 'strength', createdOnly: true, attackProof: true,
+    equipmentId: 'strength', createdOnly: true, attackProof: true, enchantment: true,
   },
   efficiency: {
     kind: 'equipment', id: 'efficiency', name: 'Efficiency', maxHp: 20,
-    equipmentId: 'efficiency', createdOnly: true, attackProof: true,
+    equipmentId: 'efficiency', createdOnly: true, attackProof: true, enchantment: true,
   },
   enchant: {
     kind: 'effect', id: 'enchant', name: 'Enchant', effectId: 'runestoneEnchant',
@@ -1476,6 +1476,98 @@ export const CATALOG: Record<string, CardDef> = {
         effects: [{ type: 'damage', amount: 40, damageTypes: ['wind', 'earth'] }] },
       { id: 'sandstorm', name: 'Sandstorm', cost: parseCost('+++'), special: 'sandstorm', effects: [] },
       { id: 'buried_alive', name: 'Buried Alive', cost: parseCost('0+'), special: 'buriedAlive', effects: [] },
+    ],
+  },
+  megetherin_bat: {
+    kind: 'monster', id: 'megetherin_bat', name: 'Megetherin Bat', points: 3, maxHp: 120,
+    weakness: 'light',
+    abilities: [
+      { id: 'shadowy_wings', name: 'Shadowy Wings', cost: parseCost('0'),
+        effects: [{ type: 'damage', amount: 20, damageType: 'wind' }] },
+      { id: 'killing_shriek', name: 'Killing Shriek', cost: parseCost('++++'),
+        effects: [{ type: 'damage', amount: 70, damageType: 'sonic' }] },
+    ],
+  },
+  iron_headed_thunderblaster: {
+    kind: 'monster', id: 'iron_headed_thunderblaster', name: 'Iron-headed Thunderblaster',
+    points: 6, maxHp: 230, defense: 1,
+    abilities: [
+      { id: 'steel_chomp', name: 'Steel Chomp', cost: parseCost('0'),
+        effects: [{ type: 'damage', amount: 40 }] },
+      { id: 'lightning_blast', name: 'Lightning Blast', cost: parseCost('+++'),
+        effects: [{ type: 'damage', amount: 80, damageType: 'electric' }] },
+      { id: 'iron_ram', name: 'Iron Ram', cost: parseCost('0+'),
+        effects: [
+          { type: 'damage', amount: 50, damageType: 'earth' },
+          { type: 'chanceStatus', status: 'weakened', turns: 1, successFaces: highFaces(4) },
+        ] },
+    ],
+  },
+  blast_leecher: {
+    kind: 'monster', id: 'blast_leecher', name: 'Blast Leecher', points: 3, maxHp: 110,
+    weakness: 'ice',
+    abilities: [
+      { id: 'heavy_claws', name: 'Heavy Claws', cost: parseCost('+'),
+        effects: [{ type: 'chanceBoostDamage', base: 10, boosted: 30, successFaces: highFaces(4), damageType: 'earth' }] },
+      { id: 'vampiric_drain', name: 'Vampiric Drain', cost: parseCost('00'),
+        effects: [{ type: 'damage', amount: 30 }, { type: 'healSelf', amount: 30 }] },
+      { id: 'blast', name: 'Blast', cost: parseCost('+++'), special: 'blast', effects: [] },
+    ],
+  },
+  wavebrewer: {
+    kind: 'monster', id: 'wavebrewer', name: 'Wavebrewer', points: 2, maxHp: 70,
+    weakness: 'ice',
+    abilities: [
+      { id: 'ocean_alchemy', name: 'Ocean Alchemy', cost: parseCost('0'), special: 'oceanAlchemy', effects: [] },
+      { id: 'gather_seaweed', name: 'Gather Seaweed', cost: parseCost('+'), free: true, special: 'drawOne', effects: [] },
+    ],
+  },
+  moonlight_leecher: {
+    kind: 'monster', id: 'moonlight_leecher', name: 'Moonlight Leecher', points: 2, maxHp: 70,
+    weakness: 'light',
+    abilities: [
+      { id: 'scratch', name: 'Scratch', cost: parseCost('0'),
+        effects: [{ type: 'damage', amount: 20 }] },
+      { id: 'drugged_vampiric_suck', name: 'Drugged Vampiric Suck', cost: parseCost('0'),
+        special: 'druggedSuck', effects: [] },
+    ],
+  },
+  energy_surge: {
+    kind: 'effect', id: 'energy_surge', name: 'Energy Surge', effectId: 'energySurge',
+  },
+  seaborn_merchant: {
+    kind: 'monster', id: 'seaborn_merchant', name: 'Seaborn Merchant', points: 2, maxHp: 80,
+    weakness: 'earth', goldAffinity: true,
+    abilities: [
+      { id: 'seablade', name: 'Seablade', cost: parseCost('0'),
+        effects: [{ type: 'damage', amount: 20, damageType: 'water' }] },
+      { id: 'overseas_trading', name: 'Overseas Trading', cost: parseCost('+'), free: true,
+        special: 'overseasTrading', effects: [] },
+    ],
+  },
+  gnome_demolitionist: {
+    kind: 'monster', id: 'gnome_demolitionist', name: 'Gnome Demolitionist', points: 2, maxHp: 70,
+    abilities: [
+      { id: 'oversized_hammer', name: 'Oversized Hammer', cost: parseCost('+'),
+        effects: [
+          { type: 'damage', amount: 20, damageType: 'earth' },
+          { type: 'status', status: 'weakened', turns: 1 },
+        ] },
+      { id: 'magnetic_bomb', name: 'Magnetic Bomb', cost: parseCost('++'), special: 'magneticBomb', effects: [] },
+      { id: 'detonate', name: 'Detonate', cost: parseCost('0'), special: 'detonate', effects: [] },
+    ],
+  },
+  gnome_bomb: {
+    kind: 'equipment', id: 'gnome_bomb', name: 'Gnome Bomb', maxHp: 40,
+    equipmentId: 'gnomeBomb', createdOnly: true, removeOnLeave: true,
+  },
+  elder_smith: {
+    kind: 'monster', id: 'elder_smith', name: 'Elder Smith', points: 2, maxHp: 90,
+    defense: 1, weakness: 'shadow', goldAffinity: true,
+    abilities: [
+      { id: 'dwarven_spirit', name: 'Dwarven Spirit', cost: parseCost('00'), special: 'dwarvenSpirit', effects: [] },
+      { id: 'master_of_the_forge', name: 'Master of the Forge', cost: parseCost('+'),
+        special: 'masterOfTheForge', effects: [] },
     ],
   },
 }
@@ -1765,6 +1857,7 @@ export type CardSearchType =
   | 'blob'
   | 'dark_charge'
   | 'gold_affinity'
+  | 'enchantment'
 
 /** Specials whose printed hit is this type even when the ability has no damage effect. */
 const SPECIAL_DAMAGE_TYPES: Record<string, Exclude<DamageType, 'untyped'>[]> = {
@@ -1805,6 +1898,8 @@ const SPECIAL_DAMAGE_TYPES: Record<string, Exclude<DamageType, 'untyped'>[]> = {
   magicMusic: ['sonic'],
   soundWave: ['sonic'],
   rocket: ['blast'],
+  blast: ['blast'],
+  detonate: ['blast'],
   chaosFireworks: ['blast'],
   fireball: ['blast'],
   ancientPowers: [...ELEMENTAL_TYPES],
@@ -1839,10 +1934,19 @@ export function cardMatchesSearchType(defId: string, type: CardSearchType): bool
   if (type === 'blob') return isBlobMonster(defId)
   if (type === 'dark_charge') return card.kind === 'monster' && card.darkCharge === true
   if (type === 'gold_affinity') return card.kind === 'monster' && card.goldAffinity === true
+  if (type === 'enchantment') return card.kind === 'equipment' && card.enchantment === true
   if (type === 'light' && card.kind === 'monster' && card.families?.includes('light')) return true
   if (card.kind === 'effect') return EFFECT_DAMAGE_TYPES[card.effectId]?.includes(type) === true
   if (card.kind !== 'monster') return false
   return card.abilities.some((ability) => abilitySearchDamageTypes(ability).includes(type))
+}
+
+/** Equipment Master of the Forge can create. Enchantments and created cards are excluded. */
+export function forgeEquipmentIds(): string[] {
+  return ALL_CARD_IDS.filter((id) => {
+    const card = getCard(id)
+    return card.kind === 'equipment' && !card.createdOnly && !card.enchantment
+  })
 }
 
 export function countElectricCardsInPlay(player: PlayerState, exceptInstanceId?: string): number {

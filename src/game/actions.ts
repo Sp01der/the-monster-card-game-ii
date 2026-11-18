@@ -3,6 +3,7 @@ import {
   chaosFireworksSpend,
   countWoodySpears,
   countsAsElementalCard,
+  forgeEquipmentIds,
   getCard,
   getMonster,
   replacementBlobHost,
@@ -31,6 +32,7 @@ import {
   goldPayments,
   emptySlots,
   isDamageProtected,
+  isAsleep,
   isClinged,
   isFrozen,
   isGooed,
@@ -97,7 +99,7 @@ function pegasusMoves(state: GameState, player: PlayerState): GameAction[] {
   const actions: GameAction[] = []
   for (let slot = 0; slot < player.field.length; slot++) {
     const monster = monsterAt(player, slot)
-    if (!monster || monster.pegasusUsedThisTurn || isGooed(monster) || isClinged(monster)) continue
+    if (!monster || monster.pegasusUsedThisTurn || isGooed(monster) || isClinged(monster) || isAsleep(monster)) continue
     if (!monster.equipment.some((equipment) => equipment.defId === 'pegasus_gift')) continue
     actions.push({
       type: 'PEGASUS_MOVE',
@@ -982,6 +984,80 @@ function collectLegalActions(state: GameState): GameAction[] {
     if (pending.kind === 'cloudBless') {
       return anyMonsterTargets(state).map((target) => ({ type: 'CLOUD_BLESS' as const, target }))
     }
+    if (pending.kind === 'handDiscardAny') {
+      return [
+        ...state.players[pending.owner].hand.map((card) => ({
+          type: 'DISCARD_ANY_TOGGLE' as const,
+          instanceId: card.instanceId,
+        })),
+        { type: 'DISCARD_ANY_FINISH' as const },
+      ]
+    }
+    if (pending.kind === 'alchemyChoice') {
+      const owner = state.players[pending.owner]
+      const brewer = owner.field[pending.slot]
+      if (pending.stage === 'mode') {
+        const modes: Array<'damage' | 'heal' | 'cleanse' | 'energy'> = []
+        if (brewer) {
+          const damageAbility: AbilityDef = {
+            id: 'ocean_alchemy',
+            name: 'Ocean Alchemy',
+            cost: { require: 0, spend: 0 },
+            effects: [{ type: 'damage', amount: 10, damageType: 'water' }],
+          }
+          if (abilityTargets(state, owner.id, brewer, damageAbility).length > 0) modes.push('damage')
+        }
+        if (anyMonsterTargets(state).length > 0) modes.push('heal')
+        if (anyMonsterTargets(state).some((target) => {
+          const monster = state.players[target.player].field[target.slot]
+          return Boolean(monster && monster.statuses.length > 0)
+        })) modes.push('cleanse')
+        if (anyMonsterTargets(state).some((target) => {
+          const monster = state.players[target.player].field[target.slot]
+          return Boolean(monster && canReceiveEnergy(monster))
+        })) modes.push('energy')
+        return modes.map((mode) => ({ type: 'ALCHEMY_MODE' as const, mode }))
+      }
+      if (pending.stage === 'status' && pending.target?.kind === 'monster') {
+        const monster = state.players[pending.target.player].field[pending.target.slot]
+        return (monster?.statuses ?? []).map((_, index) => ({ type: 'ALCHEMY_STATUS' as const, index }))
+      }
+      if (pending.mode === 'damage' && brewer) {
+        const damageAbility: AbilityDef = {
+          id: 'ocean_alchemy',
+          name: 'Ocean Alchemy',
+          cost: { require: 0, spend: 0 },
+          effects: [{ type: 'damage', amount: 10, damageType: 'water' }],
+        }
+        return withHostEquipment(
+          state,
+          withoutProtected(state, abilityTargets(state, owner.id, brewer, damageAbility)),
+        ).map((target) => ({ type: 'ALCHEMY_TARGET' as const, target }))
+      }
+      if (pending.mode === 'heal') {
+        return anyMonsterTargets(state).map((target) => ({ type: 'ALCHEMY_TARGET' as const, target }))
+      }
+      if (pending.mode === 'cleanse') {
+        return anyMonsterTargets(state)
+          .filter((target) => (state.players[target.player].field[target.slot]?.statuses.length ?? 0) > 0)
+          .map((target) => ({ type: 'ALCHEMY_TARGET' as const, target }))
+      }
+      if (pending.mode === 'energy') {
+        return anyMonsterTargets(state)
+          .filter((target) => {
+            const monster = state.players[target.player].field[target.slot]
+            return Boolean(monster && canReceiveEnergy(monster))
+          })
+          .map((target) => ({ type: 'ALCHEMY_TARGET' as const, target }))
+      }
+      return []
+    }
+    if (pending.kind === 'forge') {
+      if (pending.stage === 'equipment') {
+        return forgeEquipmentIds().map((defId) => ({ type: 'FORGE_PICK' as const, defId }))
+      }
+      return anyMonsterTargets(state).map((target) => ({ type: 'FORGE_ATTACH' as const, target }))
+    }
     if (pending.kind === 'riftEye') {
       if (pending.stage === 'discard') {
         const actions: GameAction[] = [{ type: 'RIFT_CONFIRM' }]
@@ -1071,7 +1147,7 @@ function collectLegalActions(state: GameState): GameAction[] {
 
       for (let slot = 0; slot < player.field.length; slot++) {
         const monster = monsterAt(player, slot)
-        if (!monster || isFrozen(monster) || isGooed(monster) || isStone(monster) || monster.abilitiesSealed) continue
+        if (!monster || isFrozen(monster) || isGooed(monster) || isStone(monster) || isAsleep(monster) || monster.abilitiesSealed) continue
         const acted = state.actedSlots.includes(slot)
         const extraUse = (monster.extraAbilityUses ?? 0) > 0
         if (acted && !extraUse) continue
@@ -1493,6 +1569,25 @@ function collectLegalActions(state: GameState): GameAction[] {
             }
             continue
           }
+          if (ability.special === 'masterOfTheForge' && ((monster.gold ?? 0) < 2 || forgeEquipmentIds().length === 0)) {
+            continue
+          }
+          if (ability.special === 'magneticBomb') {
+            const seen = new Set<string>()
+            const hosts = [
+              ...player.field.flatMap((candidate, index) =>
+                candidate ? [{ kind: 'monster' as const, player: player.id, slot: index }] : [],
+              ),
+              ...normalAttackTargets(state, player.id),
+            ]
+            for (const target of hosts) {
+              const key = `${target.player}-${target.slot}`
+              if (seen.has(key)) continue
+              seen.add(key)
+              actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, target })
+            }
+            continue
+          }
           if (ability.special === 'groundShaker') {
             for (const target of anyMonsterTargets(state)) {
               if (target.kind !== 'monster') continue
@@ -1530,7 +1625,7 @@ function collectLegalActions(state: GameState): GameAction[] {
                 'stampede', 'rocket', 'pilfer', 'imilithiasBrew',
                 'zap', 'collect', 'supply',
                 'guardiansBlade', 'smash', 'ironTail', 'openFourthFloor', 'underground',
-                'greatAxe', 'dwarvenSpirit', 'dragonTalons',
+                'greatAxe', 'dwarvenSpirit', 'dragonTalons', 'blast', 'druggedSuck',
                 'scent', 'burningSpear', 'greenHeal',
                 'freezingGoop', 'bigRedSplat', 'bigBlueSplat', 'ancientPowers', 'enchantMonster']
                 .includes(ability.special ?? '')
@@ -1628,6 +1723,7 @@ function collectLegalActions(state: GameState): GameAction[] {
         for (let slot = 0; slot < player.field.length; slot++) {
           const m = monsterAt(player, slot)
           if (!m || isGooed(m) || isClinged(m)) continue
+          if (isAsleep(m)) continue
           if (m.stance === 'withdrawn') actions.push({ type: 'ADVANCE', slot })
           else if (!isBoneling(m)) actions.push({ type: 'WITHDRAW', slot })
         }

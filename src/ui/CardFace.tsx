@@ -241,6 +241,7 @@ export function CardFace({
       {card.kind === 'equipment' && (
         <div className="card-stats">
           <span>♥ {card.maxHp}</span>
+          {card.enchantment ? <span className="tag">Enchantment</span> : null}
         </div>
       )}
       <p className="card-body">{cardBodyText(defId)}</p>

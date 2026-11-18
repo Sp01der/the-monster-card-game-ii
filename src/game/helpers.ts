@@ -171,6 +171,7 @@ const NEGATIVE_STATUSES = new Set<StatusInstance['kind']>([
   'cling',
   'weakened',
   'stone',
+  'asleep',
 ])
 
 export function isStone(monster: FieldMonster): boolean {
@@ -186,6 +187,19 @@ export function isFrozen(monster: FieldMonster): boolean {
 export function isGooed(monster: FieldMonster): boolean {
   if (wearsSaphireRing(monster)) return false
   return monster.statuses.some((s) => s.kind === 'goo')
+}
+
+export function isAsleep(monster: FieldMonster): boolean {
+  if (wearsSaphireRing(monster)) return false
+  return monster.statuses.some((status) => status.kind === 'asleep')
+}
+
+/** Damage greater than 0 wakes a sleeper. A hit of 0 does not. */
+export function wakeAsleep(state: GameState, monster: FieldMonster, amount: number): boolean {
+  if (amount <= 0 || !monster.statuses.some((status) => status.kind === 'asleep')) return false
+  monster.statuses = monster.statuses.filter((status) => status.kind !== 'asleep')
+  log(state, `${getMonster(monster.defId).name} wakes.`)
+  return true
 }
 
 export function isClinged(monster: FieldMonster): boolean {
@@ -325,8 +339,8 @@ export function applyStatus(
   sourcePlayer?: PlayerId,
 ): boolean {
   if (wearsSaphireRing(monster) && NEGATIVE_STATUSES.has(kind)) return false
-  if (kind === 'stone') {
-    if (!monster.statuses.some((status) => status.kind === 'stone')) {
+  if (kind === 'stone' || kind === 'asleep') {
+    if (!monster.statuses.some((status) => status.kind === kind)) {
       monster.statuses.push({ kind, turns: 0, skipNextTick: false, sourcePlayer })
     }
     return true
@@ -570,11 +584,7 @@ export function discardMonster(
     }
   }
 
-  for (const eq of monster.equipment) {
-    const card = { instanceId: eq.instanceId, defId: eq.defId }
-    if (eq.defId === 'colossus_keystone') player.removed.push(card)
-    else player.discard.push(card)
-  }
+  for (const eq of monster.equipment) retireEquipment(player, eq)
 
   player.discard.push({ instanceId: monster.instanceId, defId: monster.defId })
   const held = monster.held
@@ -664,6 +674,7 @@ export function attachCreatedEquipment(
   state: GameState,
   monster: FieldMonster,
   defId: string,
+  bonusHp = 0,
 ): void {
   const def = getCard(defId)
   if (def.kind !== 'equipment') return
@@ -671,8 +682,8 @@ export function attachCreatedEquipment(
   monster.equipment.push({
     instanceId: card.instanceId,
     defId,
-    hp: def.maxHp,
-    maxHp: def.maxHp,
+    hp: def.maxHp + bonusHp,
+    maxHp: def.maxHp + bonusHp,
   })
   if (defId === 'resilience') applyResilience(state, monster)
   log(state, `${def.name} is attached to ${getMonster(monster.defId).name}.`)
@@ -695,8 +706,19 @@ export function destroyEquipment(
   }
   if (eq.defId === 'resilience') removeResilience(monster)
   monster.equipment.splice(equipmentIndex, 1)
-  player.discard.push({ instanceId: eq.instanceId, defId: eq.defId })
+  retireEquipment(player, eq)
   log(state, `${def.name} on ${getMonster(monster.defId).name} was removed.`)
+}
+
+/** A card that cannot be replayed goes to Removed. Everything else is discarded. */
+export function retireEquipment(player: PlayerState, equipment: FieldEquipment): void {
+  const card = { instanceId: equipment.instanceId, defId: equipment.defId }
+  const def = getCard(equipment.defId)
+  const remove =
+    equipment.defId === 'colossus_keystone' ||
+    (def.kind === 'equipment' && (def.removeOnLeave === true || def.indestructible === true))
+  if (remove) player.removed.push(card)
+  else player.discard.push(card)
 }
 
 function shouldDeferFieldLoss(state: GameState, player: PlayerState): boolean {

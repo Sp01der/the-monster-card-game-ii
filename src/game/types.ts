@@ -43,7 +43,16 @@ export type EnergyCost = {
   spend: number
 }
 
-export type StatusKind = 'goo' | 'frozen' | 'burn' | 'poison' | 'wet' | 'cling' | 'weakened' | 'stone'
+export type StatusKind =
+  | 'goo'
+  | 'frozen'
+  | 'burn'
+  | 'poison'
+  | 'wet'
+  | 'cling'
+  | 'weakened'
+  | 'stone'
+  | 'asleep'
 
 export type StatusInstance = {
   kind: StatusKind
@@ -145,6 +154,10 @@ export type EquipmentDef = {
   indestructible?: boolean
   /** Attack damage does not remove this equipment. Destroy effects still can. */
   attackProof?: boolean
+  /** Runestones and Pegasus Gift. Master of the Forge cannot create these. */
+  enchantment?: boolean
+  /** Leaving play Removes this card, so it cannot be replayed. */
+  removeOnLeave?: boolean
 }
 
 /** A structure. Ethereal structures are not on the field and have no HP. */
@@ -195,6 +208,8 @@ export type FieldMonster = {
   fortifyHitsLeft?: number
   /** Gold Affinity counter. Not equipment, and not taken by attacks. */
   gold?: number
+  /** Energy Surge: this monster falls asleep when that player's turn starts. */
+  sleepOnTurn?: PlayerId
   /** Cloud of Darkness: permanent bonus to shadow damage this monster deals. */
   shadowBonus?: number
   /** Occupies a slot that exists only while this monster remains in play. */
@@ -386,7 +401,6 @@ export type GameState = {
     charges: number
     watchId?: string
     replaysLeft: number
-    targets?: TargetRef[]
     generation?: number
     replayingNow?: boolean
   }
@@ -726,6 +740,30 @@ type PendingShape =
       order: string[]
       stage: 'discard' | 'order'
     }
+  | {
+      kind: 'handDiscardAny'
+      owner: PlayerId
+      slot: number
+      chosenInstanceIds: string[]
+      purpose: 'alchemy' | 'trading'
+      requiredEnergy: number
+    }
+  | {
+      kind: 'alchemyChoice'
+      owner: PlayerId
+      slot: number
+      remaining: number
+      stage: 'mode' | 'target' | 'status'
+      requiredEnergy: number
+      mode?: 'damage' | 'heal' | 'cleanse' | 'energy'
+      target?: TargetRef
+    }
+  | {
+      kind: 'forge'
+      owner: PlayerId
+      stage: 'equipment' | 'target'
+      defId?: string
+    }
 
 export type PendingInteraction = PendingShape & {
   uid?: number
@@ -869,6 +907,13 @@ export type GameAction =
   | { type: 'ARROW_SHOT'; target: TargetRef }
   | { type: 'ARROW_SKIP' }
   | { type: 'WISDOM_ENERGY'; target: TargetRef }
+  | { type: 'DISCARD_ANY_TOGGLE'; instanceId: string }
+  | { type: 'DISCARD_ANY_FINISH' }
+  | { type: 'ALCHEMY_MODE'; mode: 'damage' | 'heal' | 'cleanse' | 'energy' }
+  | { type: 'ALCHEMY_TARGET'; target: TargetRef }
+  | { type: 'ALCHEMY_STATUS'; index: number }
+  | { type: 'FORGE_PICK'; defId: string }
+  | { type: 'FORGE_ATTACH'; target: TargetRef }
 
 export const FIELD_SIZE = 7
 export const STARTING_POINTS = 6

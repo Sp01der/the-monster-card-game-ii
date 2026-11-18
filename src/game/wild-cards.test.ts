@@ -386,6 +386,11 @@ describe('Wildersel cards', () => {
     expect(next.players[0].field[0]?.attackBonus ?? 0).toBe(0)
     next = applyAction(next, action(next, (candidate) =>
       candidate.type === 'PLAY_EFFECT' && candidate.targets[0]?.player === 1))
+    expect(next.players[1].field[0]?.hp).toBe(80)
+    expect(next.players[0].field[0]?.attackBonus).toBe(10)
+    expect(next.pending).toMatchObject({ kind: 'replayEffect', instanceId: 'archer' })
+    next = applyAction(next, action(next, (candidate) =>
+      candidate.type === 'PLAY_EFFECT' && candidate.targets[0]?.player === 1))
     expect(next.players[1].field[0]?.hp).toBe(60)
     expect(next.players[0].field[0]?.attackBonus).toBe(20)
     expect(next.cardsPlayedThisTurn).toBe(1)

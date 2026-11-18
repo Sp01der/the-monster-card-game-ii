@@ -256,6 +256,27 @@ const ABILITY_TEXT: Record<string, string> = {
   dust_devil: '40 wind and earth damage.',
   sandstorm: 'Every other monster takes 30 earth and wind damage.',
   buried_alive: 'A target monster becomes Stone. Its owner may skip an energy phase to remove Stone.',
+  shadowy_wings: '20 wind damage.',
+  killing_shriek: '70 sonic damage.',
+  steel_chomp: '40 damage.',
+  lightning_blast: '80 electric damage.',
+  iron_ram: '50 earth damage and 4/6 chance of weakened.',
+  heavy_claws: '10 earth damage. 4/6 chance of 30 earth damage instead.',
+  vampiric_drain: '30 damage. This card heals 30 HP.',
+  blast: '40 blast damage. 20 blast damage to every adjacent monster.',
+  ocean_alchemy:
+    'Discard any number of cards. For each card, choose one: deal 10 water damage, heal 10 HP, remove a status effect, or add 1 energy.',
+  gather_seaweed: 'Draw a card.',
+  drugged_vampiric_suck:
+    '10 damage and put the target to sleep. This card heals 10 HP. If the target is asleep, this card heals 20 HP instead.',
+  seablade: '20 water damage.',
+  overseas_trading: 'Discard any number of cards. Gain 2 gold for each.',
+  oversized_hammer: '20 earth damage and weakened.',
+  magnetic_bomb: 'Create a Gnome Bomb and attach it to a target monster.',
+  detonate:
+    'Every Gnome Bomb deals 60 blast damage to its attached card and 30 blast damage to each adjacent monster. The Gnome Bomb is then Removed.',
+  master_of_the_forge:
+    'Remove 2 gold from this card. Create an equipment card, other than an enchantment, and attach it to a target monster. That equipment has +10 HP.',
 }
 
 const STRUCTURE_TEXT: Record<string, string> = {
@@ -299,7 +320,7 @@ const EFFECT_TEXT: Record<string, string> = {
   inversion:
     'Two monsters opposite each other swap places and owners. Energy and equipment stay on the original side.',
   recursion:
-    'This does not use your card play. After the next effect you play finishes, that effect is immediately played again.',
+    'This does not use your card play. After the next effect you play finishes, play it again — choose targets and modes anew.',
   mirrorPact:
     'Choose any card in the match. Your opponent may play a fresh copy for free. For each opponent who does, you may play a fresh copy for free.',
   rewind:
@@ -307,6 +328,8 @@ const EFFECT_TEXT: Record<string, string> = {
   hauntedMists:
     'Ethereal. Destroy a card in your discard pile. While this card is in play, no cards may target cards belonging to their opponent. This card remains in play until the beginning of your next turn.',
   runestoneEnchant: 'Target card loses 1 energy. If it does, a random Runestone is attached to it.',
+  energySurge:
+    'Target monster gains 1 energy, then its energy is doubled. At the start of your next turn it falls asleep.',
 }
 
 const EQUIPMENT_TEXT: Record<string, string> = {
@@ -331,6 +354,7 @@ const EQUIPMENT_TEXT: Record<string, string> = {
   resilience: 'The attached card gains +20 max HP and heals 30 HP.',
   strength: 'The attached card gains +10 damage to all attacks and +1 Defense.',
   efficiency: 'All the abilities on the attached card have one + replaced with a 0.',
+  gnomeBomb: 'No effect.',
 }
 
 /** Ember Tortoise Chomp differs from Snapatrap Chomp. */
