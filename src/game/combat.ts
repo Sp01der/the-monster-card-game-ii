@@ -85,6 +85,35 @@ export function takeLastDealt(): number {
   return dealt
 }
 
+function hitTypesIncludes(
+  damageType: DamageType,
+  damageTypes: DamageType[] | undefined,
+  kind: DamageType,
+): boolean {
+  if (damageTypes?.length) return damageTypes.includes(kind)
+  return damageType === kind
+}
+
+/** Each Ashling grows once after a card actually takes a fire damage packet. */
+function growAshlings(state: GameState): void {
+  for (const side of state.players) {
+    for (const monster of side.field) {
+      if (!monster || identityDefId(monster) !== 'ashling') continue
+      const before = monster.hp
+      monster.maxHp += 10
+      monster.hp = Math.min(monster.maxHp, before + 10)
+      const gained = Math.max(0, monster.hp - Math.max(0, before))
+      recordHeal(state, gained)
+      log(
+        state,
+        gained > 0
+          ? `${getMonster(monster.defId).name} gains 10 max HP and heals ${gained} (now ${monster.hp}/${monster.maxHp}).`
+          : `${getMonster(monster.defId).name} gains 10 max HP (now ${monster.hp}/${monster.maxHp}).`,
+      )
+    }
+  }
+}
+
 function healLifesteal(state: GameState, attacker: FieldMonster | null, dealt: number, stealing: boolean): void {
   if (!stealing || dealt <= 0 || !attacker) return
   const stillThere = state.players.some((player) =>
@@ -119,6 +148,9 @@ export function dealDamageToTarget(
   damageTypes?: DamageType[],
 ): TargetRef | null {
   lastDealtDamage = 0
+  const rogueDouble =
+    attacker?.enteredThisTurn === true && identityDefId(attacker) === 'hollow_rogue'
+  if (rogueDouble) doubleBeforeDefense = true
   if (attacker && identityDefId(attacker) === 'larrathere_knight') {
     const types = damageTypes?.length ? damageTypes : [damageType]
     if (types.includes('wind')) {
@@ -214,13 +246,17 @@ export function dealDamageToTarget(
       log(state, `${eqDef.name} is not harmed by the attack.`)
       return target
     }
-    eq.hp -= base
-    lastDealtDamage = base
-    if (base > 0) rememberAggressor(state, attacker, resolved.player.id)
+    const equipmentDamage = rogueDouble ? base * 2 : base
+    eq.hp -= equipmentDamage
+    lastDealtDamage = equipmentDamage
+    if (equipmentDamage > 0) rememberAggressor(state, attacker, resolved.player.id)
     log(
       state,
-      `${getCard(eq.defId).name} takes ${base} damage (${Math.max(0, eq.hp)} HP left).`,
+      `${getCard(eq.defId).name} takes ${equipmentDamage} damage (${Math.max(0, eq.hp)} HP left).`,
     )
+    if (equipmentDamage > 0 && hitTypesIncludes(damageType, damageTypes, 'fire')) {
+      growAshlings(state)
+    }
     if (eq.hp <= 0) {
       destroyEquipment(state, resolved.player, resolved.slot, target.equipmentIndex)
     }
@@ -274,6 +310,7 @@ export function dealDamageToTarget(
       log(state, 'Lightning Worm gains 1 energy from the electric attack.')
     }
   }
+  if (amount > 0 && hitTypes.includes('fire')) growAshlings(state)
 
   if (!endured && resolved.monster.hp <= 0) {
     const killer = attackerOwner?.id ?? state.activePlayer
@@ -474,6 +511,22 @@ export function resolveAbility(
   if (!attacker) return
 
   const repeats = ability.repeats ?? 1
+  if (repeats > 1) {
+    const damage = ability.effects.find((effect) => effect.type === 'damage')
+    if (damage?.type === 'damage') {
+      state.pending = {
+        kind: 'multiHit',
+        sourcePlayer: owner.id,
+        sourceSlot: slot,
+        remaining: repeats,
+        amount: damage.amount,
+        damageType: damage.damageType ?? 'untyped',
+        piercing: damage.piercing,
+        requiredEnergy,
+      }
+      return
+    }
+  }
   for (let r = 0; r < repeats; r++) {
     if (!owner.field[slot]) break
     const source = owner.field[slot]!
@@ -497,6 +550,7 @@ export function resolveAbility(
 }
 
 export function abilityNeedsTarget(ability: AbilityDef, choice?: AbilityChoice): boolean {
+  if ((ability.repeats ?? 1) > 1) return false
   const effects =
     ability.effects[0]?.type === 'choice' && choice
       ? effectsForChoice(choice)

@@ -100,6 +100,9 @@ export function CardFace({
             <span className="tag">shadow +{field.shadowBonus}</span>
           ) : null}
           {windDamageBonus > 0 ? <span className="tag">wind +{windDamageBonus}</span> : null}
+          {field?.enteredThisTurn && identityDefId(field) === 'hollow_rogue' ? (
+            <span className="tag">×2</span>
+          ) : null}
           {identity.darkCharge ? <span className="tag">Dark Charge</span> : null}
           {identity.goldAffinity ? <span className="tag">Gold Affinity</span> : null}
           {field && identity.goldAffinity ? <span>gold {field.gold ?? 0}</span> : null}

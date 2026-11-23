@@ -306,7 +306,26 @@ describe('wind, stone, and ethereal cards', () => {
     const blades = main(game())
     put(blades.players[0], 0, 'construct_warrior', { energy: 3 })
     put(blades.players[1], 0, 'construct')
-    expect(use(blades, 'electro_blades').players[1].field[0]?.hp).toBe(60)
+    put(blades.players[1], 1, 'blob')
+    const started = use(blades, 'electro_blades')
+    expect(started.pending).toMatchObject({
+      kind: 'multiHit',
+      remaining: 2,
+      amount: 20,
+      damageType: 'electric',
+      piercing: true,
+    })
+    const first = applyAction(started, {
+      type: 'PENDING_TARGET',
+      target: { kind: 'monster', player: 1, slot: 0 },
+    })
+    expect(first.players[1].field[0]?.hp).toBe(80)
+    const second = applyAction(first, {
+      type: 'PENDING_TARGET',
+      target: { kind: 'monster', player: 1, slot: 1 },
+    })
+    expect(second.players[1].field[1]?.hp).toBe(30)
+    expect(second.pending).toBeNull()
   })
 
   it('locks the golem until Storm Coming and then shoots at the end of a turn', () => {

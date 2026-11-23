@@ -204,6 +204,7 @@ const EQUIPMENT_STRIKE_SPECIALS = new Set([
   'dragonTalons',
   'scent',
   'burningSpear',
+  'flashbloom',
 ])
 
 /** A chosen single card. Area attacks and adjacency attacks are excluded. */
@@ -383,6 +384,60 @@ export function describeTarget(state: GameState, target: TargetRef): string {
     return `${getCard(eq.defId).name} on ${player.name}'s ${name}`
   }
   return `${player.name}'s ${name}`
+}
+
+export function targetKey(target: TargetRef): string {
+  if (target.kind === 'equipment') return `e:${target.player}:${target.slot}:${target.equipmentIndex}`
+  return `m:${target.player}:${target.slot}`
+}
+
+function mergeTargets(groups: TargetRef[][]): TargetRef[] {
+  const merged: TargetRef[] = []
+  const seen = new Set<string>()
+  for (const group of groups) {
+    for (const target of group) {
+      const key = targetKey(target)
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(target)
+    }
+  }
+  return merged
+}
+
+/** Gleam: your cards, plus ranged enemy cards. */
+export function gleamTargets(
+  state: GameState,
+  attackerPlayer: PlayerId,
+  attacker: FieldMonster,
+): TargetRef[] {
+  const own: TargetRef[] = []
+  const player = state.players[attackerPlayer]
+  for (let slot = 0; slot < player.field.length; slot++) {
+    if (player.field[slot]) own.push({ kind: 'monster', player: attackerPlayer, slot })
+  }
+  return mergeTargets([
+    withHostEquipment(state, own),
+    withHostEquipment(state, rangedAttackTargets(state, attackerPlayer, attacker)),
+  ])
+}
+
+/** Heal 20 HP: every card you control, plus cards you could normally attack. */
+export function standardHealTargets(state: GameState, playerId: PlayerId): TargetRef[] {
+  const own: TargetRef[] = []
+  const player = state.players[playerId]
+  for (let slot = 0; slot < player.field.length; slot++) {
+    if (player.field[slot]) own.push({ kind: 'monster', player: playerId, slot })
+  }
+  return mergeTargets([
+    withHostEquipment(state, own),
+    withHostEquipment(state, normalAttackTargets(state, playerId)),
+  ])
+}
+
+/** Searing Light: normal attack targets, including equipment on those monsters. */
+export function searingLightTargets(state: GameState, attackerPlayer: PlayerId): TargetRef[] {
+  return withHostEquipment(state, withoutProtected(state, normalAttackTargets(state, attackerPlayer)))
 }
 
 export function canUseAbilityWhileWithdrawn(attacker: FieldMonster, ability: AbilityDef): boolean {

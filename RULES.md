@@ -50,6 +50,8 @@ Defense lowers an attack by 10 per point, to a minimum of 10. Piercing ignores D
 
 N/6 chance of X succeeds on the highest N faces. A chance that harms you uses the lowest N faces. N/6 chance of X instead replaces the other result. A line that begins with Roll prints every face.
 
+×N is that many hits. Each hit chooses its own target.
+
 ## Leaving play
 
 Slain: a monster at 0 HP is discarded, and its owner loses points equal to that monster. Killed and die mean slain.

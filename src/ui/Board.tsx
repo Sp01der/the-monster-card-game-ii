@@ -338,6 +338,20 @@ function describeAction(state: GameState, action: GameAction): string {
       return `Create ${getCard(action.defId).name}`
     case 'FORGE_ATTACH':
       return 'Attach the equipment'
+    case 'VAWK_SKIP':
+      return 'Do not use an ability'
+    case 'VAWK_ABILITY':
+      return action.abilityId === 'shining_bow' ? 'Shining Bow' : 'Cleansing Rites'
+    case 'VAWK_TARGET':
+      return 'Use the free action'
+    case 'REVEAL_TYPE':
+      return `Search for ${action.cardKind} cards`
+    case 'FLASHBLOOM_HEAL':
+      return 'Heal 20 HP'
+    case 'SEARING_TARGET':
+      return '10 light damage'
+    case 'BURN_CARD':
+      return 'Burn this card'
     case 'CHOOSE_OPPONENT':
       return `Choose ${state.players[action.player]!.name}`
   }
@@ -387,8 +401,15 @@ export function Board({
   const [darklightPick, setDarklightPick] = useState<number | null>(null)
   const [tomeView, setTomeView] = useState<{ playerId: PlayerId; slot: number } | null>(null)
   const spellSelectKey = useRef<string | null>(null)
+  const logBoxRef = useRef<HTMLDivElement | null>(null)
   const legal = useMemo(() => listLegalActions(state), [state])
   const chooser = decisionPlayer(state)
+
+  useEffect(() => {
+    const box = logBoxRef.current
+    if (!box) return
+    box.scrollTop = box.scrollHeight
+  }, [state.log.length])
 
   useEffect(() => {
     const pending = state.pending
@@ -641,7 +662,7 @@ export function Board({
             New game
           </button>
           <div className="log-box win-log">
-            {state.log.slice(-12).map((e, i) => (
+            {state.log.map((e, i) => (
               <p key={i}>{e.message}</p>
             ))}
           </div>
@@ -720,6 +741,30 @@ export function Board({
     prompt = 'Choose the card for this result.'
     for (const action of legal) {
       if (action.type === 'ALCHEMY_TARGET') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'vawkStrike' && state.pending.stage === 'ability') {
+    prompt = 'You may use one ability as a free action.'
+  } else if (state.pending?.kind === 'vawkStrike') {
+    prompt = 'Choose the card for that ability.'
+    for (const action of legal) {
+      if (action.type === 'VAWK_TARGET') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'revealType') {
+    prompt = 'Choose a card type.'
+  } else if (state.pending?.kind === 'flashbloomHeal') {
+    prompt = 'Choose a card to heal 20 HP.'
+    for (const action of legal) {
+      if (action.type === 'FLASHBLOOM_HEAL') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'searingLight') {
+    prompt = `Choose a different target (${state.pending.remaining} remaining).`
+    for (const action of legal) {
+      if (action.type === 'SEARING_TARGET') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'burnCards') {
+    prompt = `Choose a card to burn (${state.pending.remaining} remaining).`
+    for (const action of legal) {
+      if (action.type === 'BURN_CARD') highlightTargets.add(targetKey(action.target))
     }
   } else if (state.pending?.kind === 'forge' && state.pending.stage === 'equipment') {
     prompt = 'Choose an equipment card to create.'
@@ -1123,6 +1168,30 @@ export function Board({
       const action = legal.find(
         (a) => a.type === 'FORGE_ATTACH' && actionsEqualTargets(a.target, clicked),
       )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'vawkStrike' && state.pending.stage === 'target') {
+      const action = legal.find((a) => a.type === 'VAWK_TARGET' && actionsEqualTargets(a.target, clicked))
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'flashbloomHeal') {
+      const action = legal.find(
+        (a) => a.type === 'FLASHBLOOM_HEAL' && actionsEqualTargets(a.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'searingLight') {
+      const action = legal.find(
+        (a) => a.type === 'SEARING_TARGET' && actionsEqualTargets(a.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'burnCards') {
+      const action = legal.find((a) => a.type === 'BURN_CARD' && actionsEqualTargets(a.target, clicked))
       if (action) dispatch(action)
       return
     }
@@ -1623,6 +1692,21 @@ export function Board({
     }
     if (state.pending?.kind === 'alchemyChoice' && state.pending.stage === 'target') {
       const action = legal.find((a) => a.type === 'ALCHEMY_TARGET' && actionsEqualTargets(a.target, t))
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'vawkStrike' && state.pending.stage === 'target') {
+      const action = legal.find((a) => a.type === 'VAWK_TARGET' && actionsEqualTargets(a.target, t))
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'flashbloomHeal') {
+      const action = legal.find((a) => a.type === 'FLASHBLOOM_HEAL' && actionsEqualTargets(a.target, t))
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'searingLight') {
+      const action = legal.find((a) => a.type === 'SEARING_TARGET' && actionsEqualTargets(a.target, t))
       if (action) dispatch(action)
       return
     }
@@ -2237,6 +2321,43 @@ export function Board({
           </div>
         )}
 
+        {state.pending?.kind === 'vawkStrike' && state.pending.stage === 'ability' && (
+          <div className="ability-choice">
+            <h3>Reach for the Sky</h3>
+            <div className="chip-row">
+              {legal
+                .filter((action) => action.type === 'VAWK_ABILITY' || action.type === 'VAWK_SKIP')
+                .map((action) => (
+                  <button
+                    key={action.type === 'VAWK_ABILITY' ? action.abilityId : action.type}
+                    type="button"
+                    className="chip"
+                    onClick={() => dispatch(action)}
+                  >
+                    {describeAction(state, action)}
+                  </button>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {state.pending?.kind === 'revealType' && (
+          <div className="ability-choice">
+            <h3>Revealing Light</h3>
+            <div className="chip-row">
+              {legal
+                .filter((action) => action.type === 'REVEAL_TYPE')
+                .map((action) =>
+                  action.type === 'REVEAL_TYPE' ? (
+                    <button key={action.cardKind} type="button" className="chip" onClick={() => dispatch(action)}>
+                      {describeAction(state, action)}
+                    </button>
+                  ) : null,
+                )}
+            </div>
+          </div>
+        )}
+
         {state.pending?.kind === 'forge' && state.pending.stage === 'equipment' && (
           <div className="ability-choice">
             <h3>Master of the Forge</h3>
@@ -2321,8 +2442,8 @@ export function Board({
 
         {lastRoll !== undefined && <DieResult value={lastRoll} />}
 
-        <div className="log-box" aria-label="Game activity">
-          {state.log.slice(-10).map((e, i) => (
+        <div className="log-box" aria-label="Game activity" ref={logBoxRef}>
+          {state.log.map((e, i) => (
             <p key={i} className={e.dieRoll !== undefined ? 'roll-log-entry' : undefined}>
               {e.dieRoll !== undefined && (
                 <span className="mini-die" aria-hidden="true">

@@ -49,7 +49,11 @@ import {
   anyMonsterTargets,
   canUseAbilityWhileWithdrawn,
   effectTargetOptions,
+  gleamTargets,
   offersEquipmentTargets,
+  searingLightTargets,
+  standardHealTargets,
+  targetKey,
   withHostEquipment,
   withoutProtected,
 } from './targeting'
@@ -1058,6 +1062,62 @@ function collectLegalActions(state: GameState): GameAction[] {
       }
       return anyMonsterTargets(state).map((target) => ({ type: 'FORGE_ATTACH' as const, target }))
     }
+    if (pending.kind === 'vawkStrike') {
+      const monster = state.players[pending.owner].field[pending.slot]
+      if (!monster) return [{ type: 'VAWK_SKIP' }]
+      if (pending.stage === 'ability') {
+        const actions: GameAction[] = [{ type: 'VAWK_SKIP' }]
+        for (const ability of monsterAbilities(monster)) {
+          if (ability.id !== 'shining_bow' && ability.id !== 'cleansing_rites') continue
+          if (!canUseAbilityWhileWithdrawn(monster, ability)) continue
+          if (
+            !canAfford(
+              monster,
+              adjustedCost(monster, ability.cost).require,
+              adjustedCost(monster, ability.cost).spend,
+            )
+          ) {
+            continue
+          }
+          actions.push({ type: 'VAWK_ABILITY', abilityId: ability.id })
+        }
+        return actions
+      }
+      const ability = monsterAbilities(monster).find((candidate) => candidate.id === pending.abilityId)
+      if (!ability) return [{ type: 'VAWK_SKIP' }]
+      const targets =
+        ability.special === 'cleansingRites'
+          ? withHostEquipment(state, anyMonsterTargets(state))
+          : withHostEquipment(
+              state,
+              withoutProtected(state, abilityTargets(state, pending.owner, monster, ability)),
+            )
+      return targets.map((target) => ({ type: 'VAWK_TARGET' as const, target }))
+    }
+    if (pending.kind === 'revealType') {
+      return (['monster', 'effect', 'equipment', 'structure'] as const).map((cardKind) => ({
+        type: 'REVEAL_TYPE' as const,
+        cardKind,
+      }))
+    }
+    if (pending.kind === 'flashbloomHeal') {
+      return standardHealTargets(state, pending.owner).map((target) => ({
+        type: 'FLASHBLOOM_HEAL' as const,
+        target,
+      }))
+    }
+    if (pending.kind === 'searingLight') {
+      const attacker = state.players[pending.owner].field[pending.slot]
+      const targets = (attacker ? searingLightTargets(state, pending.owner) : []).filter(
+        (target) => !pending.chosen.includes(targetKey(target)),
+      )
+      return targets.map((target) => ({ type: 'SEARING_TARGET' as const, target }))
+    }
+    if (pending.kind === 'burnCards') {
+      return anyMonsterTargets(state)
+        .filter((target) => !pending.chosen.includes(targetKey(target)))
+        .map((target) => ({ type: 'BURN_CARD' as const, target }))
+    }
     if (pending.kind === 'riftEye') {
       if (pending.stage === 'discard') {
         const actions: GameAction[] = [{ type: 'RIFT_CONFIRM' }]
@@ -1192,12 +1252,18 @@ function collectLegalActions(state: GameState): GameAction[] {
             abilityTargets(state, player.id, monster, ability).length === 0
           ) continue
           if (ability.special === 'gleam') {
-            const allies = player.field.flatMap((ally, allySlot) =>
-              ally ? [{ kind: 'monster' as const, player: player.id, slot: allySlot }] : [],
-            )
-            for (const target of withHostEquipment(state, allies)) {
+            for (const target of gleamTargets(state, player.id, monster)) {
               actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, target })
             }
+            continue
+          }
+          if (ability.special === 'cleansingRites') {
+            for (const target of withHostEquipment(state, anyMonsterTargets(state))) {
+              actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, target })
+            }
+            continue
+          }
+          if (ability.special === 'searingLight' && searingLightTargets(state, player.id).length === 0) {
             continue
           }
           if (ability.special === 'healingLight') {
@@ -1625,7 +1691,7 @@ function collectLegalActions(state: GameState): GameAction[] {
                 'stampede', 'rocket', 'pilfer', 'imilithiasBrew',
                 'zap', 'collect', 'supply',
                 'guardiansBlade', 'smash', 'ironTail', 'openFourthFloor', 'underground',
-                'greatAxe', 'dwarvenSpirit', 'dragonTalons', 'blast', 'druggedSuck',
+                'greatAxe', 'dwarvenSpirit', 'dragonTalons', 'blast', 'druggedSuck', 'flashbloom',
                 'scent', 'burningSpear', 'greenHeal',
                 'freezingGoop', 'bigRedSplat', 'bigBlueSplat', 'ancientPowers', 'enchantMonster']
                 .includes(ability.special ?? '')

@@ -1304,7 +1304,13 @@ button.card-passive {
   order: 10;
   flex: 1;
   max-height: none;
-  min-height: 140px;
+  min-height: 12rem;
+}
+
+.log-box.win-log {
+  max-height: min(50vh, 28rem);
+  margin-top: 1rem;
+  text-align: left;
 }
 
 .log-box p {

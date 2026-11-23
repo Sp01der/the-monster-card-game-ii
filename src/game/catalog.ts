@@ -494,12 +494,12 @@ export const CATALOG: Record<string, CardDef> = {
   },
   lantern_wisp: {
     kind: 'monster', id: 'lantern_wisp', name: 'Lantern Wisp', points: 1, maxHp: 50,
-    weakness: 'ice', families: ['light'],
+    weakness: 'wind', families: ['light'],
     abilities: [
+      { id: 'searing_light', name: 'Searing Light', cost: parseCost('+'), light: true,
+        special: 'searingLight', effects: [] },
       { id: 'gleam', name: 'Gleam', cost: parseCost('0'), free: true, ranged: true, light: true,
         special: 'gleam', effects: [] },
-      { id: 'flicker', name: 'Flicker', cost: parseCost('+'), light: true,
-        effects: [{ type: 'damage', amount: 10, damageType: 'light' }] },
     ],
   },
   dawn_acolyte: {
@@ -1073,7 +1073,7 @@ export const CATALOG: Record<string, CardDef> = {
   },
   breaker: {
     kind: 'monster', id: 'breaker', name: 'Breaker', points: 2, maxHp: 100,
-    weakness: 'blast', defense: 1,
+    weakness: 'blast',
     abilities: [
       { id: 'breaker_bash', name: 'Bash', cost: parseCost('+'),
         effects: [{ type: 'damage', amount: 30, damageType: 'earth' }] },
@@ -1570,6 +1570,64 @@ export const CATALOG: Record<string, CardDef> = {
         special: 'masterOfTheForge', effects: [] },
     ],
   },
+  goldwind_vawk: {
+    kind: 'monster', id: 'goldwind_vawk', name: 'Goldwind Vawk', points: 2, maxHp: 70,
+    weakness: 'earth', goldAffinity: true,
+    abilities: [
+      { id: 'shining_bow', name: 'Shining Bow', cost: parseCost('0+'), ranged: true, light: true,
+        effects: [{ type: 'damage', amount: 30, damageType: 'light' }] },
+      { id: 'reach_for_the_sky', name: 'Reach for the Sky', cost: parseCost('00'),
+        special: 'reachForTheSky', effects: [] },
+      { id: 'cleansing_rites', name: 'Cleansing Rites', cost: parseCost('0+'), light: true,
+        special: 'cleansingRites', effects: [] },
+    ],
+  },
+  suntouched_larner: {
+    kind: 'monster', id: 'suntouched_larner', name: 'Suntouched Larner', points: 2, maxHp: 80,
+    weakness: 'wind',
+    abilities: [
+      { id: 'piercing_ray', name: 'Piercing Ray', cost: parseCost('+'), light: true,
+        effects: [{ type: 'damage', amount: 20, damageType: 'light', piercing: true }] },
+      { id: 'revealing_light', name: 'Revealing Light', cost: parseCost('0+'), light: true,
+        special: 'revealingLight', effects: [] },
+    ],
+  },
+  lightbloom_snapatrap: {
+    kind: 'monster', id: 'lightbloom_snapatrap', name: 'Lightbloom Snapatrap', points: 2, maxHp: 70,
+    weakness: 'wind', families: ['plant'],
+    passiveText: 'When this card is slain, each opposing active monster takes 10 light damage.',
+    abilities: [
+      { id: 'chomp', name: 'Chomp', cost: parseCost('+'),
+        effects: [{ type: 'rollDamage', table: { 1: 30, 2: 30, 3: 30, 4: 40, 5: 40, 6: 40 } }] },
+      { id: 'flashbloom', name: 'Flashbloom', cost: parseCost('00'), light: true,
+        special: 'flashbloom', effects: [] },
+      { id: 'regrow', name: 'Regrow', cost: parseCost('0'), free: true,
+        effects: [{ type: 'healSelf', amount: 10 }] },
+    ],
+  },
+  hollow_rogue: {
+    kind: 'monster', id: 'hollow_rogue', name: 'Hollow Rogue', points: 2, maxHp: 70,
+    weakness: 'light', goldAffinity: true, darkCharge: true,
+    passiveText: 'This card does double damage on the turn you play it.',
+    abilities: [
+      { id: 'twisted_knife', name: 'Twisted Knife', cost: parseCost('0'),
+        effects: [{ type: 'damage', amount: 20 }] },
+      { id: 'black_bolt', name: 'Black Bolt', cost: parseCost('0+'),
+        effects: [{ type: 'damage', amount: 30, damageType: 'shadow' }] },
+      { id: 'vanish', name: 'Vanish', cost: parseCost('+++'), special: 'vanish', effects: [] },
+    ],
+  },
+  ashling: {
+    kind: 'monster', id: 'ashling', name: 'Ashling', points: 2, maxHp: 70,
+    weakness: 'wind',
+    passiveText: 'Whenever a card takes fire damage, this card gains 10 max HP and heals 10 HP.',
+    abilities: [
+      { id: 'ember_punch', name: 'Ember Punch', cost: parseCost('+'),
+        effects: [{ type: 'damage', amount: 20, damageType: 'fire' }] },
+      { id: 'sudden_blaze', name: 'Sudden Blaze', cost: parseCost('0+'),
+        special: 'suddenBlaze', effects: [] },
+    ],
+  },
 }
 
 export const SPEAR_ABILITY: AbilityDef = {
@@ -1900,6 +1958,8 @@ const SPECIAL_DAMAGE_TYPES: Record<string, Exclude<DamageType, 'untyped'>[]> = {
   rocket: ['blast'],
   blast: ['blast'],
   detonate: ['blast'],
+  searingLight: ['light'],
+  flashbloom: ['light'],
   chaosFireworks: ['blast'],
   fireball: ['blast'],
   ancientPowers: [...ELEMENTAL_TYPES],

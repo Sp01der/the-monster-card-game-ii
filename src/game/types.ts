@@ -101,7 +101,7 @@ export type AbilityDef = {
   ice?: boolean
   /** Counts as a light ability. */
   light?: boolean
-  /** Resolve this ability's effect list this many times (e.g. Sizzling Shell x2). */
+  /** This many hits. Each hit chooses its own target. */
   repeats?: number
   /** Named resolver for abilities whose rules are more than basic effects. */
   special?: string
@@ -232,6 +232,8 @@ export type FieldMonster = {
   abilitiesSealed?: boolean
   /** Sandstorm Golem: Storm Coming has unlocked the other abilities. */
   abilitiesUnlocked?: boolean
+  /** Hollow Rogue: damage is doubled on the turn this card was played. */
+  enteredThisTurn?: boolean
 }
 
 /** A card placed under another card by Absorb. */
@@ -249,6 +251,8 @@ export type FieldEquipment = {
 export type HandCard = {
   instanceId: string
   defId: string
+  /** Vanish: current HP, max HP, usable energy, gold, and equipment kept until this card is played again. */
+  kept?: { hp: number; maxHp?: number; energy: number; gold?: number; equipment?: FieldEquipment[] }
 }
 
 /** Rewind's remembered state. Restoring it does not change points. */
@@ -749,6 +753,24 @@ type PendingShape =
       requiredEnergy: number
     }
   | {
+      kind: 'vawkStrike'
+      owner: PlayerId
+      slot: number
+      stage: 'ability' | 'target'
+      abilityId?: string
+    }
+  | { kind: 'revealType'; owner: PlayerId }
+  | { kind: 'flashbloomHeal'; owner: PlayerId }
+  | {
+      kind: 'searingLight'
+      owner: PlayerId
+      slot: number
+      remaining: number
+      chosen: string[]
+      requiredEnergy: number
+    }
+  | { kind: 'burnCards'; owner: PlayerId; remaining: number; chosen: string[] }
+  | {
       kind: 'alchemyChoice'
       owner: PlayerId
       slot: number
@@ -914,6 +936,13 @@ export type GameAction =
   | { type: 'ALCHEMY_STATUS'; index: number }
   | { type: 'FORGE_PICK'; defId: string }
   | { type: 'FORGE_ATTACH'; target: TargetRef }
+  | { type: 'VAWK_SKIP' }
+  | { type: 'VAWK_ABILITY'; abilityId: string }
+  | { type: 'VAWK_TARGET'; target: TargetRef }
+  | { type: 'REVEAL_TYPE'; cardKind: CardKind }
+  | { type: 'FLASHBLOOM_HEAL'; target: TargetRef }
+  | { type: 'SEARING_TARGET'; target: TargetRef }
+  | { type: 'BURN_CARD'; target: TargetRef }
 
 export const FIELD_SIZE = 7
 export const STARTING_POINTS = 6

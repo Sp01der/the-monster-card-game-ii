@@ -65,6 +65,12 @@ function pendingDecisionPlayer(pending: PendingInteraction): PlayerId {
     case 'handDiscardAny':
     case 'alchemyChoice':
     case 'forge':
+    case 'vawkStrike':
+    case 'revealType':
+    case 'flashbloomHeal':
+    case 'burnCards':
+      return pending.owner
+    case 'searingLight':
       return pending.owner
     case 'multiHit':
     case 'stormType':

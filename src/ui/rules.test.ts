@@ -22,5 +22,6 @@ describe('RULES.md', () => {
     expect(source).toContain('Destroy:')
     expect(source).toContain('Spare energy')
     expect(source).toContain('Immobilized')
+    expect(source).toContain('Each hit chooses its own target')
   })
 })

@@ -63,7 +63,8 @@ describe('earth and guardian catalog', () => {
     expect(getMonster('ancient_monstrosity')).toMatchObject({
       points: 3, maxHp: 110, defense: 2, weaknesses: ['blast', 'ice'],
     })
-    expect(getMonster('breaker')).toMatchObject({ points: 2, maxHp: 100, defense: 1, weakness: 'blast' })
+    expect(getMonster('breaker')).toMatchObject({ points: 2, maxHp: 100, weakness: 'blast' })
+    expect(getMonster('breaker').defense).toBeUndefined()
     expect(getMonster('hill_troll')).toMatchObject({
       points: 4, maxHp: 160, defense: 1, extremeWeakness: true, weakness: 'light',
     })

@@ -53,17 +53,24 @@ function card(instanceId: string, defId: string): HandCard {
 
 describe('light support cards', () => {
   it('adds a small splash package', () => {
-    expect(getMonster('lantern_wisp')).toMatchObject({ points: 1, maxHp: 50, families: ['light'] })
+    expect(getMonster('lantern_wisp')).toMatchObject({
+      points: 1,
+      maxHp: 50,
+      weakness: 'wind',
+      families: ['light'],
+    })
     expect(getMonster('dawn_acolyte')).toMatchObject({ points: 2, maxHp: 70, weakness: 'ice' })
     expect(getCard('daybreak')).toMatchObject({ kind: 'effect' })
     expect(getCard('prism_lens')).toMatchObject({ kind: 'equipment', maxHp: 20 })
   })
 
-  it('Gleam lets another element trigger Light weakness without a second multiplier', () => {
+  it('Gleam heals 10, clears negative statuses, and stays free', () => {
     let state = main(game())
     put(state.players[0], 0, 'lantern_wisp', { energy: 1 })
-    put(state.players[0], 1, 'fire_sprite', { energy: 1, hp: 80 })
-    put(state.players[1], 0, 'winter_wizard')
+    put(state.players[0], 1, 'fire_sprite', {
+      hp: 80,
+      statuses: [{ kind: 'burn', turns: 3, skipNextTick: false }],
+    })
 
     state = applyAction(
       state,
@@ -78,19 +85,8 @@ describe('light support cards', () => {
     )
     expect(state.abilityUsesLeft).toBe(1)
     expect(state.players[0].field[1]?.hp).toBe(90)
-    expect(state.players[0].field[1]?.illuminatedThisTurn).toBe(true)
-
-    state = applyAction(
-      state,
-      action(
-        state,
-        (candidate) =>
-          candidate.type === 'USE_ABILITY' &&
-          candidate.abilityId === 'fire_punch' &&
-          candidate.choice === 'firePunchFull',
-      ),
-    )
-    expect(state.players[1].field[0]?.hp).toBe(40)
+    expect(state.players[0].field[1]?.statuses).toEqual([])
+    expect(state.players[0].field[1]?.illuminatedThisTurn).toBeUndefined()
   })
 
   it('Gleam can heal the Wisp itself', () => {
@@ -108,7 +104,7 @@ describe('light support cards', () => {
       ),
     )
     expect(state.players[0].field[0]?.hp).toBe(40)
-    expect(state.players[0].field[0]?.illuminatedThisTurn).toBe(true)
+    expect(state.players[0].field[0]?.illuminatedThisTurn).toBeUndefined()
   })
 
   it('Chorus deals 20 light damage plus 10 for each other monster', () => {
@@ -201,24 +197,11 @@ describe('light support cards', () => {
     expect(state.players[1].field[0]?.stance).toBe('withdrawn')
   })
 
-  it('clears Gleam illumination at the start of that controller’s next turn', () => {
+  it('clears illumination at the start of that controller’s next turn', () => {
     let state = main(game())
-    put(state.players[0], 0, 'lantern_wisp', { energy: 1 })
-    put(state.players[0], 1, 'blob')
-    state = applyAction(
-      state,
-      action(
-        state,
-        (candidate) =>
-          candidate.type === 'USE_ABILITY' &&
-          candidate.abilityId === 'gleam' &&
-          candidate.target?.kind === 'monster' &&
-          candidate.target.slot === 1,
-      ),
-    )
-    expect(state.players[0].field[1]?.illuminatedThisTurn).toBe(true)
+    put(state.players[0], 0, 'blob', { illuminatedThisTurn: true })
     state.phase = 'draw'
     state = applyAction(state, { type: 'SKIP_DRAW' })
-    expect(state.players[0].field[1]?.illuminatedThisTurn).toBe(false)
+    expect(state.players[0].field[0]?.illuminatedThisTurn).toBe(false)
   })
 })

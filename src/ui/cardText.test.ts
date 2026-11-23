@@ -111,4 +111,29 @@ describe('withBladeCost live damage', () => {
       'Heal a monster controlled by each player 30 HP. You gain 1 additional energy in the energy phase.',
     )
   })
+
+  it('doubles Hollow Rogue damage after weapon and shadow bonuses on the turn it is played', () => {
+    const armed = mon({
+      defId: 'hollow_rogue',
+      enteredThisTurn: true,
+      energy: 2,
+      shadowBonus: 20,
+      equipment: [{ instanceId: 's', defId: 'sword', hp: 20, maxHp: 20 }],
+    })
+    const doubled = withBladeCost(abilityLines(getCard('hollow_rogue')), armed)
+    // Twisted Knife is untyped: 20 + 20 spare sword = 40, then ×2.
+    expect(doubled.find((line) => line.id === 'twisted_knife')?.body).toBe('80 damage.')
+    // Black Bolt: 30 + 20 spare sword + 20 shadow = 70, then ×2.
+    expect(doubled.find((line) => line.id === 'black_bolt')?.body).toBe('140 shadow damage.')
+    expect(doubled.find((line) => line.id === 'vanish')?.body).toBe(
+      'Return this card to your hand. It keeps its current energy, HP, gold, and equipment.',
+    )
+
+    const later = withBladeCost(
+      abilityLines(getCard('hollow_rogue')),
+      mon({ ...armed, enteredThisTurn: undefined }),
+    )
+    expect(later.find((line) => line.id === 'twisted_knife')?.body).toBe('40 damage.')
+    expect(later.find((line) => line.id === 'black_bolt')?.body).toBe('70 shadow damage.')
+  })
 })

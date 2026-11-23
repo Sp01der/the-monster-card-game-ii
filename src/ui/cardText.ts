@@ -1,4 +1,4 @@
-import { formatDamageType, getCard, getWeaknesses, monsterAbilities } from '../game/catalog'
+import { formatDamageType, getCard, getWeaknesses, identityDefId, monsterAbilities } from '../game/catalog'
 import { adjustedCost, printedAttackBonus } from '../game/damage'
 import type { AbilityDef, CardDef, EnergyCost, FieldMonster } from '../game/types'
 
@@ -38,11 +38,11 @@ const ABILITY_TEXT: Record<string, string> = {
   arrow_volley: '20 damage',
   snipe: '40 damage',
   fire_punch: '30 fire damage, or 10 fire damage and burn.',
-  overheat: '10 fire damage and burn. ×3, separately targeted.',
+  overheat: '10 fire damage and burn ×3.',
   poke: '10 damage',
   explode: '100 blast damage. This card is removed.',
   // Ember Tortoise also has chomp — override by checking in helper if needed
-  sizzling_shell: '20 fire damage. 2/6 chance of burn for 2 turns. ×2, separately targeted.',
+  sizzling_shell: '20 fire damage. 2/6 chance of burn for 2 turns ×2.',
   claw: '20 damage',
   water_gush: '5/6 chance of 20 water damage and wet.',
   magic_missile: '20 damage',
@@ -80,7 +80,7 @@ const ABILITY_TEXT: Record<string, string> = {
   water_jet: '5/6 chance of 40 water damage and wet.',
   treasures_waves: 'Draw a card',
   sting: '20 poison damage',
-  tentacle_attack: 'Three separately targeted hits of 20 damage',
+  tentacle_attack: '20 damage ×3.',
   absorb: 'Bury any number of cards; use Sting once per card',
   snap: '30 damage. 2/6 chance of 40 damage instead.',
   hunt: '10 damage; bury any number for +30 each',
@@ -100,8 +100,20 @@ const ABILITY_TEXT: Record<string, string> = {
   frost_breath: 'Freeze two targets. The opponent discards a card.',
   golem_winter_winds: '20 damage and freeze.',
   spear: '20 damage. 3/6 chance of 30 damage instead.',
-  gleam: 'Heal 10 HP on one of your cards. It is illuminated this turn.',
-  flicker: '10 light damage',
+  gleam: 'Heal 10 HP and clear all negative status effects.',
+  searing_light: '10 light damage to three different targets.',
+  shining_bow: '30 light damage.',
+  reach_for_the_sky:
+    'This card is Ethereal. You may return it to the field on your turn. When you do, you may use one of its other abilities as a free action.',
+  cleansing_rites: 'Heal a card 30 HP and remove any status effects it has.',
+  piercing_ray: '20 piercing light damage.',
+  revealing_light: 'Choose a card type. Add the top two cards of that type from your deck to your hand.',
+  flashbloom: '20 light damage. Heal 20 HP.',
+  twisted_knife: '20 damage.',
+  black_bolt: '30 shadow damage.',
+  vanish: 'Return this card to your hand. It keeps its current energy, HP, gold, and equipment.',
+  ember_punch: '20 fire damage.',
+  sudden_blaze: 'This card takes 30 damage and burns 3 cards.',
   healing_light: 'Remove all statuses from a target. Heal 20 HP.',
   chorus: '20 light damage, plus 10 for each other monster you control',
   fire_sword: '40 fire damage and burn.',
@@ -111,9 +123,9 @@ const ABILITY_TEXT: Record<string, string> = {
   lava_claw: '20 damage; 30 with an extra 0',
   magma_gush: '5/6 chance of 40 fire damage and burn.',
   solar_flare: '20 light damage; spend 1 more for 30 instead',
-  sunburn: '10 fire damage ×3, separately targeted; ×4 with an extra 0',
+  sunburn: '10 fire damage ×3. ×4 with an extra 0.',
   zap: '20 electric damage; spend 1 more for 40 instead',
-  storm: '10 piercing electric damage ×4, separately targeted',
+  storm: '10 piercing electric damage ×4.',
   robotic_stab: '10 damage. 5/6 chance of 30 damage instead.',
   plasma_cannon:
     'Roll any number of times (1–2 miss, 3–6 hit). Each hit is +20 electric. Two misses fail the attack.',
@@ -125,12 +137,12 @@ const ABILITY_TEXT: Record<string, string> = {
   supply: 'Move any amount of energy from this card to another of your monsters',
   crush: '50 damage',
   channel: 'Gain 1 energy for each other electric card you have in play',
-  worm_storm: '70 electric damage ×3, separately targeted',
+  worm_storm: '70 electric damage ×3.',
   acid_spew: '10 poison damage. 4/6 chance of 50 poison damage instead.',
   gladin_sting: '10 poison damage and poison for 5 turns.',
   big_club: '40 damage',
   cyclops_laser: '30 light damage and burn. 3/6 chance of 40 light damage and burn instead.',
-  eye_flash: 'Burn for 2 turns, twice, separately targeted.',
+  eye_flash: 'Burn for 2 turns ×2.',
   burning_buck: '30 fire damage and burn.',
   stampede: '30 fire. Also 30 fire to one adjacent withdrawn card.',
   rocket: '40 blast to a target. 20 blast to every adjacent monster.',
@@ -166,11 +178,11 @@ const ABILITY_TEXT: Record<string, string> = {
   green_heal: 'Choose another monster to heal 30 HP.',
   woody_spear: '20 damage. 2/6 chance of 30 damage instead.',
   ambush: 'Roll: 1–3 = 10, 4–6 = 40.',
-  team_attack: 'Spear once for every Woody in play and every Woody in your hand. Each hit chooses its own target.',
+  team_attack: 'Spear once for every Woody in play and every Woody in your hand.',
   multiply: "Create a Lovni's Weed. If you have no empty slot, add one that leaves when that weed does.",
   scent: "10 poison damage, plus 10 for each other Lovni's Weed you have in play.",
   snap_trap: '30 damage.',
-  triple_chomp: 'Roll: 1–3 = 30, 4–6 = 40. Twice at 70–120 HP, three times at 130+ HP. Each chomp rolls and targets separately.',
+  triple_chomp: 'Roll: 1–3 = 30, 4–6 = 40. Twice at 70–120 HP, three times at 130+ HP.',
   thornbark_stick: '10 damage. 1/6 chance of 20 damage instead.',
   healing_hands: 'Heal 30 HP. Cannot heal a fire monster or the equipment on one.',
   growth: 'A plant you control gains 20 HP and 20 max HP.',
@@ -198,7 +210,7 @@ const ABILITY_TEXT: Record<string, string> = {
   attack: 'Take two more actions. Your attacks deal +10 damage this turn.',
   overdramatic_solo: 'Roll: 1 = 10 sonic, 2–5 = 20 sonic, 6 = 30 sonic.',
   attracting_melody: 'Draw two cards.',
-  magic_music: '20 sonic damage, twice. Each hit chooses its own target.',
+  magic_music: '20 sonic damage ×2.',
   serpents_fang: '20 poison damage and poison for 1 turn.',
   tail_gale: '30 wind damage and withdraw the target.',
   raid: '30 damage and gain 1 gold if the target took damage.',
@@ -246,7 +258,7 @@ const ABILITY_TEXT: Record<string, string> = {
   soar: 'Choose a monster. It and this card become Ethereal until your next turn.',
   wind_punch: '30 wind damage.',
   dancing_on_the_wind: '10 wind damage. This card becomes Ethereal. You may return it to the field on your turn.',
-  electro_blades: '20 electric piercing damage, twice.',
+  electro_blades: '20 piercing electric damage.',
   guard_protocol: 'Protect a card.',
   way_of_the_wind: '0 wind damage.',
   render_aid: 'Heal a monster controlled by each player 30 HP. You gain 1 additional energy in the energy phase.',
@@ -434,63 +446,62 @@ export function boostWindPrintedDamage(text: string, bonus: number): string {
   return text.replace(/(\d+)(?= wind damage\b)/g, (match) => String(Number(match) + bonus))
 }
 
+const PRINTED_TYPE_DAMAGE =
+  /^ (?:fire|water|ice|poison|electric|light|sonic|blast|shadow|wind|earth)(?:[.;,]|\s+to\b|\s+\+|\s+and\b|\s+or\s+\w+\s+damage\b)/i
+
+/**
+ * How a number in ability text relates to the attack.
+ * `bonus` is a flat damage figure. `rate` is a per-card or per-HP figure that
+ * stays put when a flat bonus is added, then still doubles with the attack.
+ */
+function printedDamageKind(before: string, after: string): 'bonus' | 'rate' | 'skip' {
+  if (/this card takes\s*$/i.test(before) || /this card taking\s*$/i.test(before)) return 'skip'
+  if (/takes\s*$/i.test(before) && /^ damage\b/i.test(after)) return 'bonus'
+  if (/^ (?:piercing )?(?:\w+ )?damage\b/i.test(after) && !/takes\s*$/i.test(before)) {
+    if (/^ (?:piercing )?(?:\w+ )?damage (?:per\b|for each\b)/i.test(after)) return 'rate'
+    return 'bonus'
+  }
+  if (/chance of\s*$/i.test(before) && /^ instead\b/i.test(after)) return 'bonus'
+  if (/=\s*$/.test(before) || /Each hit is \+$/i.test(before)) return 'bonus'
+  if (PRINTED_TYPE_DAMAGE.test(after)) return 'bonus'
+  return 'skip'
+}
+
+function mapPrintedNumbers(
+  text: string,
+  visit: (value: number, kind: 'bonus' | 'rate') => { replace: string; raised: boolean },
+): { text: string; foundDamage: boolean; raisedBaseDamage: boolean } {
+  let foundDamage = false
+  let raisedBaseDamage = false
+  const next = text.replace(/\d+/g, (match, offset, full) => {
+    const before = full.slice(Math.max(0, offset - 28), offset)
+    const after = full.slice(offset + match.length)
+    const kind = printedDamageKind(before, after)
+    if (kind === 'skip') return match
+    foundDamage = true
+    const result = visit(Number(match), kind)
+    if (result.raised) raisedBaseDamage = true
+    return result.replace
+  })
+  return { text: next, foundDamage, raisedBaseDamage }
+}
+
 /** Raise printed damage numbers by flat attack bonuses (Sword, Cloud of Darkness, etc.). */
 export function boostPrintedDamage(text: string, bonus: number): string {
   if (bonus <= 0 || !text) return text
-  const add = (n: number) => String(n + bonus)
-  let foundDamage = false
-  let raisedBaseDamage = false
-  const boosted = text.replace(/\d+/g, (match, offset, full) => {
-    const value = Number(match)
-    const before = full.slice(Math.max(0, offset - 28), offset)
-    const after = full.slice(offset + match.length)
-    if (/this card takes\s*$/i.test(before)) return match
-    if (/this card taking\s*$/i.test(before)) return match
-    if (/takes\s*$/i.test(before) && /^ damage\b/i.test(after)) {
-      foundDamage = true
-      raisedBaseDamage = true
-      return add(value)
-    }
-    if (/^ (?:piercing )?(?:\w+ )?damage\b/i.test(after) && !/takes\s*$/i.test(before)) {
-      foundDamage = true
-      // Flat bonuses apply once to the whole attack, not to "30 damage per card"
-      // or "20 damage for each..." multipliers.
-      if (
-        /^ (?:piercing )?(?:\w+ )?damage (?:per\b|for each\b)/i.test(after)
-      ) {
-        return match
-      }
-      raisedBaseDamage = true
-      return add(value)
-    }
-    if (/chance of\s*$/i.test(before) && /^ instead\b/i.test(after)) {
-      foundDamage = true
-      raisedBaseDamage = true
-      return add(value)
-    }
-    if (/=\s*$/.test(before)) {
-      foundDamage = true
-      raisedBaseDamage = true
-      return add(value)
-    }
-    if (/Each hit is \+$/i.test(before)) {
-      foundDamage = true
-      raisedBaseDamage = true
-      return add(value)
-    }
-    if (
-      /^ (?:fire|water|ice|poison|electric|light|sonic|blast|shadow|wind|earth)(?:[.;,]|\s+to\b|\s+\+|\s+and\b|\s+or\s+\w+\s+damage\b)/i.test(
-        after,
-      )
-    ) {
-      foundDamage = true
-      raisedBaseDamage = true
-      return add(value)
-    }
-    return match
-  })
-  if (!foundDamage || raisedBaseDamage) return boosted
-  return `${boosted.replace(/\.*$/, '')}. +${bonus} damage.`
+  const mapped = mapPrintedNumbers(text, (value, kind) =>
+    kind === 'rate'
+      ? { replace: String(value), raised: false }
+      : { replace: String(value + bonus), raised: true },
+  )
+  if (!mapped.foundDamage || mapped.raisedBaseDamage) return mapped.text
+  return `${mapped.text.replace(/\.*$/, '')}. +${bonus} damage.`
+}
+
+/** Double printed damage after flat bonuses have already been added. */
+export function doublePrintedDamage(text: string): string {
+  if (!text) return text
+  return mapPrintedNumbers(text, (value) => ({ replace: String(value * 2), raised: true })).text
 }
 
 function abilityLooksShadow(ability: AbilityDef | undefined, body: string): boolean {
@@ -518,6 +529,12 @@ export function withBladeCost(
   if (!field) return lines
   const keep = (cost: EnergyCost): EnergyCost => adjustedCost(field, cost)
   const abilities = monsterAbilities(field)
+  const doubleDamage =
+    field.enteredThisTurn === true && identityDefId(field) === 'hollow_rogue'
+  const bake = (text: string, bonus: number) => {
+    const boosted = boostPrintedDamage(boostWindPrintedDamage(text, windDamageBonus), bonus)
+    return doubleDamage ? doublePrintedDamage(boosted) : boosted
+  }
   return lines.map((line) => {
     const ability = abilities.find((entry) => entry.id === line.id)
     const requiredEnergy = adjustedCost(field, ability?.cost ?? line.cost).require
@@ -529,11 +546,9 @@ export function withBladeCost(
     return {
       ...line,
       cost: keep(line.cost),
-      body: boostPrintedDamage(boostWindPrintedDamage(line.body, windDamageBonus), bonus),
+      body: bake(line.body, bonus),
       upgradeCost: line.upgradeCost ? keep(line.upgradeCost) : undefined,
-      upgradeText: line.upgradeText
-        ? boostPrintedDamage(boostWindPrintedDamage(line.upgradeText, windDamageBonus), bonus)
-        : undefined,
+      upgradeText: line.upgradeText ? bake(line.upgradeText, bonus) : undefined,
     }
   })
 }

@@ -1,4 +1,5 @@
 import { deathSpawnDefId, getCard, getMonster, identityDefId, isBoneling } from './catalog'
+import { dealDamageToTarget } from './combat'
 import type {
   CardSnapshot,
   EtherealEntry,
@@ -221,6 +222,25 @@ export function clearNegativeStatuses(state: GameState, monster: FieldMonster): 
   }
   monster.statuses = monster.statuses.filter((status) => !NEGATIVE_STATUSES.has(status.kind))
   log(state, `${getMonster(monster.defId).name} is immune to negative status effects.`)
+}
+
+/** Remove statuses from a monster and drop Cling links that were on it. */
+export function stripStatuses(state: GameState, monster: FieldMonster, negativeOnly: boolean): boolean {
+  const removing = (kind: StatusInstance['kind']) => !negativeOnly || NEGATIVE_STATUSES.has(kind)
+  const clingSources = monster.statuses
+    .filter((status) => status.kind === 'cling' && removing('cling') && status.sourceInstanceId)
+    .map((status) => status.sourceInstanceId!)
+  const had = monster.statuses.some((status) => removing(status.kind))
+  if (!had) return false
+  for (const sourceId of clingSources) {
+    for (const owner of state.players) {
+      for (const other of owner.field) {
+        if (other?.instanceId === sourceId) other.clingTargetInstanceId = undefined
+      }
+    }
+  }
+  monster.statuses = monster.statuses.filter((status) => !removing(status.kind))
+  return true
 }
 
 export function hasKeystone(monster: FieldMonster): boolean {
@@ -625,6 +645,22 @@ export function discardMonster(
         state,
         `${def.name} falls, and ${player.name}'s monsters gain 1 energy. ${player.name} may take an additional action next turn.`,
       )
+    }
+    if (monster.defId === 'lightbloom_snapatrap') {
+      const hits: TargetRef[] = []
+      for (const opponent of livingOpponents(state, player.id)) {
+        for (let index = 0; index < opponent.field.length; index++) {
+          const foe = opponent.field[index]
+          if (foe?.stance === 'active') {
+            hits.push({ kind: 'monster', player: opponent.id, slot: index })
+          }
+        }
+      }
+      for (const hit of hits) {
+        if (state.players[hit.player].field[hit.slot]) {
+          dealDamageToTarget(state, null, hit, 10, 'light')
+        }
+      }
     }
     const spawnId = deathSpawnDefId(monster.defId)
     if (spawnId && player.points > 0) {
