@@ -69,7 +69,19 @@ function pendingDecisionPlayer(pending: PendingInteraction): PlayerId {
     case 'revealType':
     case 'flashbloomHeal':
     case 'burnCards':
+    case 'incinerationPick':
+    case 'bloodlustChoice':
+    case 'thornGrowth':
+    case 'legionGrows':
+    case 'feedTarget':
+    case 'goldenEnergy':
+    case 'elementalStrike':
+    case 'draggedDeep':
+    case 'feedBeast':
+    case 'warcryPick':
       return pending.owner
+    case 'deepFreeze':
+      return pending.sourcePlayer
     case 'searingLight':
       return pending.owner
     case 'multiHit':

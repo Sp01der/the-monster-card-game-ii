@@ -187,7 +187,7 @@ describe('runestones, tomes, and blobs', () => {
     expect(hit.players[0].field[0]?.tome).toEqual(['long_range_archer'])
   })
 
-  it('discards a card, then deals 40 blast and burns for 3 turns', () => {
+  it('discards a card, then deals 40 blast and burns for 2 turns', () => {
     const state = main(game())
     put(state.players[0], 0, 'tomebinder_wizard', { energy: 2, hp: 100, maxHp: 100 })
     put(state.players[1], 0, 'blob', { hp: 50, maxHp: 50 })
@@ -206,7 +206,7 @@ describe('runestones, tomes, and blobs', () => {
       action(aiming, (candidate) => candidate.type === 'FIREBALL_SHOT'),
     )
     expect(burned.players[1].field[0]?.hp).toBe(10)
-    expect(burned.players[1].field[0]?.statuses.find((status) => status.kind === 'burn')?.turns).toBe(3)
+    expect(burned.players[1].field[0]?.statuses.find((status) => status.kind === 'burn')?.turns).toBe(2)
 
     const empty = main(game())
     put(empty.players[0], 0, 'tomebinder_wizard', { energy: 2, hp: 100, maxHp: 100 })
@@ -479,7 +479,7 @@ describe('runestones, tomes, and blobs', () => {
     )
     expect(once.pending).toBeNull()
     expect(once.players[1].field[0]?.statuses.map((status) => status.kind).sort()).toEqual(['burn', 'goo'])
-    expect(once.players[1].field[0]?.statuses.find((status) => status.kind === 'burn')?.turns).toBe(3)
+    expect(once.players[1].field[0]?.statuses.find((status) => status.kind === 'burn')?.turns).toBe(2)
 
     const again = main(game())
     again.rng = () => 6

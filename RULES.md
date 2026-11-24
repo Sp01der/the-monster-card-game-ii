@@ -20,6 +20,12 @@ Before the first turn, each player may keep or redraw once. The top monster stay
 
 On your first turn you do not draw, and you do not use abilities, effects, or equipment. Play any number of monsters from your hand, and at least one. Each may enter active or withdrawn.
 
+## Unique cards
+
+A Unique card may appear once in a deck. Unique monsters cannot be the top monster. Before the game you may set one Unique monster aside. During your energy phase, if it is not skipped, you may attach energy as usual, skip the rest, or play that Unique. Playing it ends the energy phase and does not use your card play.
+
+A Special is a rule a card enforces while it is in play. It is not a Passive.
+
 ## Cards and energy
 
 A monster has HP, points, and abilities. An effect is played once. Equipment is attached to a monster and has its own HP.
@@ -76,9 +82,9 @@ Goo, 1 turn. That card cannot use abilities. It may spend 1 energy to remove Goo
 
 Frozen, 2 turns. That card cannot use abilities. The verb is freeze.
 
-Burn, 3 turns. 20 damage at the end of its owner's turn. 20 fire damage and burn. 20 fire damage and burn for 2 turns.
+Burn, 2 turns. 20 damage at the end of its owner's turn. 20 fire damage and burn. 20 fire damage and burn for 3 turns.
 
-Poison, 3 turns. 10 damage at the end of its owner's turn, or 30 if that card used an ability or moved. 20 poison damage and poison.
+Poison, 2 turns. 10 damage at the end of its owner's turn, or 30 if that card used an ability or moved. 20 poison damage and poison.
 
 Wet, 3 turns. Water damage against it gains 10 before weakness and Defense.
 

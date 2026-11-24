@@ -1,5 +1,6 @@
 import { getCard } from './catalog'
 import type { AbilityDef, FieldMonster, GameState, PlayerId, PlayerState, TargetRef } from './types'
+import { BESIDE_SLOT } from './types'
 import {
   getPlayer,
   isDamageProtected,
@@ -19,6 +20,7 @@ function opposingMonstersFor(
     const m = opp.field[i]
     if (m) monsters.push({ slot: i, monster: m })
   }
+  if (opp.beside) monsters.push({ slot: BESIDE_SLOT, monster: opp.beside })
   return { opp, monsters }
 }
 
@@ -136,6 +138,17 @@ export function anyCardTargets(state: GameState): TargetRef[] {
           kind: 'equipment',
           player: player.id,
           slot: i,
+          equipmentIndex: eqIndex,
+        })
+      })
+    }
+    if (player.beside) {
+      targets.push({ kind: 'monster', player: player.id, slot: BESIDE_SLOT })
+      player.beside.equipment.forEach((_, eqIndex) => {
+        targets.push({
+          kind: 'equipment',
+          player: player.id,
+          slot: BESIDE_SLOT,
           equipmentIndex: eqIndex,
         })
       })

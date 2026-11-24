@@ -79,7 +79,7 @@ describe('fire card catalog', () => {
     })
     expect(
       getMonster('red_knight').abilities.find((a) => a.id === 'fire_sword')?.effects,
-    ).toContainEqual({ type: 'status', status: 'burn', turns: 3 })
+    ).toContainEqual({ type: 'status', status: 'burn', turns: 2 })
   })
 })
 
@@ -293,7 +293,7 @@ describe('times-X attacks', () => {
       remaining: 3,
       amount: 10,
       status: 'burn',
-      statusTurns: 3,
+      statusTurns: 2,
     })
     state = applyAction(
       state,
@@ -310,11 +310,11 @@ describe('times-X attacks', () => {
     expect(state.pending).toBeNull()
     expect(state.players[1].field[0]?.hp).toBe(30)
     expect(state.players[1].field[0]?.statuses).toEqual([
-      expect.objectContaining({ kind: 'burn', turns: 6 }),
+      expect.objectContaining({ kind: 'burn', turns: 4 }),
     ])
     expect(state.players[1].field[1]?.hp).toBe(60)
     expect(state.players[1].field[1]?.statuses).toEqual([
-      expect.objectContaining({ kind: 'burn', turns: 3 }),
+      expect.objectContaining({ kind: 'burn', turns: 2 }),
     ])
   })
 

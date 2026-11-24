@@ -368,4 +368,31 @@ describe('light, ash, and rogue cards', () => {
     expect(choice.players[0].field[0]).toMatchObject({ hp: 40, maxHp: 70 })
     expect(choice.pending).toMatchObject({ kind: 'burnCards', remaining: 3 })
   })
+
+  it('grows from every-elemental attacks, including Yentir', () => {
+    let state = main(game())
+    put(state.players[0], 0, 'elemental_summoner', { energy: 2 })
+    put(state.players[0], 1, 'ashling', { instanceId: 'ash' })
+    put(state.players[1], 0, 'blob', { hp: 100, maxHp: 100 })
+    state = use(
+      state,
+      'elemental_blast',
+      (candidate) => candidate.target?.player === 1 && candidate.target.slot === 0,
+    )
+    expect(state.players[0].field[1]).toMatchObject({ hp: 80, maxHp: 80 })
+
+    let yentir = main(game())
+    put(yentir.players[0], 0, 'blob', {
+      energy: 1,
+      equipment: [{ instanceId: 'y', defId: 'yentir_starforged', hp: 0, maxHp: 0 }],
+    })
+    put(yentir.players[0], 1, 'ashling', { instanceId: 'ash' })
+    put(yentir.players[1], 0, 'blob', { hp: 100, maxHp: 100 })
+    yentir = use(
+      yentir,
+      'wakkle',
+      (candidate) => candidate.target?.player === 1 && candidate.target.slot === 0,
+    )
+    expect(yentir.players[0].field[1]).toMatchObject({ hp: 80, maxHp: 80 })
+  })
 })

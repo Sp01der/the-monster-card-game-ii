@@ -15,6 +15,7 @@ import {
   getWeaknesses,
   identityDefId,
   hasGoldAffinity,
+  isPlunderer,
   canUseDarkCharge,
   hasDarkCharge,
   isBlobMonster,
@@ -46,6 +47,8 @@ import {
   applyResilience,
   applyStatus,
   attachCreatedEquipment,
+  DEFAULT_BURN_TURNS,
+  DEFAULT_POISON_TURNS,
   activePlayer,
   becomeEthereal,
   beginProtection,
@@ -69,13 +72,18 @@ import {
   isStone,
   log,
   makeCard,
+  monsterAt,
   releaseHeld,
   releaseProtection,
   removeResilience,
   restoreSnapshot,
+  isPirateCard,
+  isThornflower,
   isTwoPlayer,
+  isUnendingLegion,
   livingOpponents,
   nextLivingPlayerId,
+  occupiedSlots,
   otherPlayer,
   placeMonsterOnField,
   randomRunestone,
@@ -92,6 +100,7 @@ import {
 } from './helpers'
 import {
   anyCardTargets,
+  abilityTargets,
   anyMonsterTargets,
   canUseAbilityWhileWithdrawn,
   effectIsUntargeted,
@@ -102,6 +111,7 @@ import {
   withoutProtected,
 } from './targeting'
 import {
+  BESIDE_SLOT,
   HAND_SIZE_LIMIT,
   type CardSnapshot,
   type DamageType,
@@ -109,8 +119,10 @@ import {
   type GameAction,
   type GameState,
   type HandCard,
+  type PendingInteraction,
   type PlayerId,
   type PlayerState,
+  type Stance,
   type TargetRef,
 } from './types'
 
@@ -127,6 +139,33 @@ function clearPending(state: GameState): void {
     const continued = state.pending
     beginMirrorCopy(state, continued.pactOwner, continued.pactOwner, continued.defId, 'self')
   }
+}
+
+/** Drop a multi-hit that finished while Bloodlust (or similar) was nested on top. */
+function clearFinishedMultiHit(state: GameState): void {
+  if (state.pending?.kind !== 'multiHit') return
+  if (
+    state.pending.remaining <= 0 ||
+    !listLegalActions(state).some((candidate) => candidate.type === 'PENDING_TARGET')
+  ) {
+    clearPending(state)
+  }
+}
+
+/** Remove a finished interaction that was pushed under a newer nested pending. */
+function dropStackedPending(state: GameState, kind: PendingInteraction['kind']): void {
+  const top = state.pendingStack[state.pendingStack.length - 1]
+  if (top?.kind === kind) state.pendingStack.pop()
+}
+
+/** After Monstrous Growth, finish Green Fairy end-of-turn heals if none remain. */
+function finishFairyHealsIfDone(state: GameState): void {
+  if (state.pending?.kind !== 'fairyHeal' || state.pending.remaining > 0) return
+  clearPending(state)
+  tickStatuses(state)
+  healShrines(state)
+  queueArrowShots(state)
+  if (state.winner === null && state.pending === null) passTurn(state)
 }
 
 function defIdInMatch(state: GameState, instanceId: string): string | undefined {
@@ -297,7 +336,10 @@ function resumePlayCardsAfter(state: GameState, before: GameState['pending']): v
       }
       return
     }
-    if (state.pending === before) clearPending(state)
+    if (state.pending === before) {
+      if (before.followUp === 'elementalStrike') beginElementalStrike(state, before)
+      else clearPending(state)
+    }
     return
   }
   const resumed = { ...before, played }
@@ -305,6 +347,43 @@ function resumePlayCardsAfter(state: GameState, before: GameState['pending']): v
     state.pending = resumed
   } else {
     state.pendingStack.push(resumed)
+  }
+}
+
+function beginElementalStrike(
+  state: GameState,
+  pending: Extract<PendingInteraction, { kind: 'playCards' }>,
+): void {
+  const owner = state.players[pending.owner]
+  const source =
+    pending.sourceSlot !== undefined ? monsterAt(owner, pending.sourceSlot) : undefined
+  if (!source || pending.sourceSlot === undefined) {
+    clearPending(state)
+    return
+  }
+  state.pending = {
+    kind: 'elementalStrike',
+    owner: pending.owner,
+    slot: pending.sourceSlot,
+    requiredEnergy: pending.requiredEnergy ?? 0,
+  }
+  log(state, 'Choose a target for 40 damage of every elemental type.')
+}
+
+/** Paralyzing Fear and Chilling Winds end when the named player's turn starts. */
+function clearStartOfTurnLocks(state: GameState, starting: PlayerId): void {
+  for (const side of state.players) {
+    for (const monster of [...side.field, side.beside ?? null]) {
+      if (!monster) continue
+      if (monster.paralyzedBy === starting) {
+        monster.paralyzedBy = undefined
+        log(state, `Paralyzing Fear releases ${getMonster(monster.defId).name}.`)
+      }
+      if (monster.chillSpendUntil === starting) {
+        monster.chillSpendUntil = undefined
+        log(state, `Chilling Winds fades from ${getMonster(monster.defId).name}.`)
+      }
+    }
   }
 }
 
@@ -343,7 +422,7 @@ function beginMainPhase(state: GameState): void {
   state.skipEnergyPhase = false
   state.endStepResolved = false
   player.attackBonus = 0
-  for (const monster of player.field) {
+  for (const monster of [...player.field, player.beside ?? null]) {
     if (monster) {
       monster.sparkedThisTurn = false
       monster.freeActionThisTurn = false
@@ -352,6 +431,8 @@ function beginMainPhase(state: GameState): void {
       monster.illuminatedThisTurn = false
       monster.honourGuardUntilNextTurn = false
       monster.pegasusUsedThisTurn = false
+      monster.havenDefense = undefined
+      monster.wingsAnyTarget = undefined
     }
   }
 }
@@ -385,6 +466,11 @@ function beginEnergyPhase(state: GameState): void {
     finishEnergyPhase(state)
     return
   }
+  startEnergyDistribution(state)
+}
+
+function startEnergyDistribution(state: GameState): void {
+  const player = activePlayer(state)
   state.phase = 'energy'
   const sparkSucceeded = player.field.some((m) => m?.sparkedThisTurn)
   const fairies = player.field.filter((m) => m && identityDefId(m) === 'yellow_fairy').length
@@ -678,22 +764,46 @@ function beginEtherealReturns(state: GameState): void {
   log(state, 'Choose an empty slot for the returning monster.')
 }
 
+function controlsKings(player: PlayerState): boolean {
+  if (player.beside && identityDefId(player.beside) === 'kings_of_the_ocean') return true
+  return player.field.some((monster) => monster && identityDefId(monster) === 'kings_of_the_ocean')
+}
+
+function tickTribute(state: GameState, endingPlayer: PlayerState): void {
+  if (!controlsKings(endingPlayer)) return
+  for (const side of state.players) {
+    if (!side.tributeSafe) continue
+    for (const [id, remaining] of Object.entries(side.tributeSafe)) {
+      const next = remaining - 1
+      if (next <= 0) delete side.tributeSafe[id]
+      else side.tributeSafe[id] = next
+    }
+    if (Object.keys(side.tributeSafe).length === 0) side.tributeSafe = undefined
+  }
+}
+
 function passTurn(state: GameState): void {
   const player = activePlayer(state)
+  tickTribute(state, player)
   player.isFirstTurn = false
   player.hasFinishedFirstTurn = true
   player.healedLastTurn = player.healedThisTurn ?? 0
   player.healedThisTurn = 0
   for (const side of state.players) {
-    for (const monster of side.field) {
-      if (monster) monster.enteredThisTurn = undefined
+    for (const monster of [...side.field, side.beside ?? null]) {
+      if (monster) {
+        monster.enteredThisTurn = undefined
+        monster.havenDefense = undefined
+      }
     }
   }
   if (player.blockEffects) player.blockEffects = undefined
 
   player.attackBonus = 0
+  player.tribeAttackBonus = undefined
 
   if (player.extraTurn) {
+    clearStartOfTurnLocks(state, player.id)
     player.extraTurn = false
     state.playedCardThisTurn = false
     state.cardsPlayedThisTurn = 0
@@ -724,6 +834,7 @@ function passTurn(state: GameState): void {
     ? otherPlayer(state.activePlayer)
     : nextLivingPlayerId(state, state.activePlayer)
   state.activePlayer = nextId
+  clearStartOfTurnLocks(state, nextId)
   state.playedCardThisTurn = false
   state.cardsPlayedThisTurn = 0
   state.movedThisTurn = false
@@ -875,11 +986,70 @@ function applySplat(
   if (monster && target) {
     const skip = target.player === state.activePlayer
     applyStatus(monster, 'goo', 1, 1, undefined, skip)
-    applyStatus(monster, also, also === 'burn' ? 3 : 2, 1, undefined, skip, player.id)
+    applyStatus(monster, also, also === 'burn' ? DEFAULT_BURN_TURNS : 2, 1, undefined, skip, player.id)
   }
   if (attacker && lensSuccessFaces(attacker, highFaces(1)).includes(rollDie(state))) {
     state.pending = { kind: 'repeatGoo', sourcePlayer: player.id, sourceSlot: slot, also }
   }
+}
+
+function createFieldMonster(
+  state: GameState,
+  card: HandCard,
+  stance: Stance,
+): FieldMonster {
+  const def = getMonster(card.defId)
+  const memory = state.cardMemory?.[card.instanceId]
+  const monster: FieldMonster = {
+    instanceId: card.instanceId,
+    defId: card.defId,
+    hp: card.kept ? Math.min(card.kept.maxHp ?? def.maxHp, card.kept.hp) : def.maxHp,
+    maxHp: card.kept?.maxHp ?? def.maxHp,
+    stance: def.besideRow ? 'active' : stance,
+    energy: card.kept?.energy ?? 0,
+    pendingEnergy: 0,
+    statuses: [],
+    equipment: card.kept?.equipment?.map((equipment) => ({ ...equipment })) ?? [],
+    ...(card.kept?.gold ? { gold: card.kept.gold } : {}),
+    ...(def.id === 'hollow_rogue' ? { enteredThisTurn: true } : {}),
+    ...(memory?.furyDamage !== undefined ? { furyDamage: memory.furyDamage } : {}),
+    ...(memory?.bloodlustStacks !== undefined
+      ? { bloodlustStacks: memory.bloodlustStacks }
+      : {}),
+  }
+  if (def.families?.includes('pirate') || state.pirateTags?.includes(card.instanceId)) {
+    monster.pirate = true
+  }
+  return monster
+}
+
+function playMonsterCard(
+  state: GameState,
+  actor: PlayerState,
+  card: HandCard,
+  slot: number,
+  stance: Stance,
+): FieldMonster | null {
+  const def = getMonster(card.defId)
+  if (def.id === 'relkar_goldflame' && actor.points < 6) {
+    log(state, `${def.name} cannot enter play with fewer than 6 points.`)
+    return null
+  }
+  const monster = createFieldMonster(state, card, stance)
+  if (def.besideRow) {
+    if (actor.beside) {
+      log(state, `${actor.name} already has a card beside the row.`)
+      return null
+    }
+    actor.beside = monster
+  } else {
+    actor.field[slot] = monster
+  }
+  if (def.id === 'lord_kalung_firefist') {
+    grantEnergy(state, monster, 2)
+    log(state, `${def.name} gains 2 energy.`)
+  }
+  return monster
 }
 
 function resolveSpecialAbility(
@@ -892,7 +1062,7 @@ function resolveSpecialAbility(
   requiredEnergy: number,
   skipSpend = false,
 ): void {
-  const attacker = player.field[slot]
+  const attacker = monsterAt(player, slot)
   if (!attacker) return
   const target = action.target
   switch (special) {
@@ -1369,7 +1539,14 @@ function resolveSpecialAbility(
           dealDamageToTarget(state, attacker, target, 40, 'fire', false, requiredEnergy) ?? target
         const monster = targetMonster(state, hitTarget)
         if (monster) {
-          applyStatus(monster, 'burn', 3, 1, undefined, hitTarget.player === state.activePlayer)
+          applyStatus(
+            monster,
+            'burn',
+            DEFAULT_BURN_TURNS,
+            1,
+            undefined,
+            hitTarget.player === state.activePlayer,
+          )
         }
       } else log(state, 'Magma Gush missed.')
       break
@@ -1410,7 +1587,7 @@ function resolveSpecialAbility(
         damageType: 'fire',
         requiredEnergy,
         status: 'burn',
-        statusTurns: 3,
+        statusTurns: DEFAULT_BURN_TURNS,
       }
       break
     case 'eyeFlash':
@@ -1782,7 +1959,7 @@ function resolveSpecialAbility(
       }
       break
     case 'gainGold':
-      beginAssignGold(state, player, 1)
+      beginAssignGold(state, player, 1, false, attacker.instanceId)
       break
     case 'theft': {
       if (!target || target.kind !== 'equipment') break
@@ -1859,7 +2036,7 @@ function resolveSpecialAbility(
           applyStatus(
             monster,
             'poison',
-            3,
+            DEFAULT_POISON_TURNS,
             1,
             undefined,
             hitTarget.player === state.activePlayer,
@@ -1956,7 +2133,7 @@ function resolveSpecialAbility(
           applyStatus(
             monster,
             'burn',
-            3,
+            DEFAULT_BURN_TURNS,
             1,
             undefined,
             hitTarget.player === state.activePlayer,
@@ -2467,13 +2644,352 @@ function resolveSpecialAbility(
       log(state, 'Choose 3 cards to burn.')
       break
     }
+    case 'hailToTheKings': {
+      const owned = anyCardTargets(state).filter((hit) => hit.player === player.id)
+      if (owned.length === 0) break
+      if (target && owned.some((hit) => targetKey(hit) === targetKey(target))) {
+        if (target.kind === 'monster') {
+          const marked = targetMonster(state, target)
+          if (marked) {
+            marked.pirate = true
+            state.pirateTags = [...new Set([...(state.pirateTags ?? []), marked.instanceId])]
+            log(state, `${getMonster(marked.defId).name} becomes a Pirate.`)
+          }
+        } else {
+          const host = resolveTarget(state, target)
+          const eq = host?.monster.equipment[target.equipmentIndex]
+          if (eq) {
+            state.pirateTags = [...new Set([...(state.pirateTags ?? []), eq.instanceId])]
+            log(state, `${getCard(eq.defId).name} becomes a Pirate.`)
+          }
+        }
+      }
+      break
+    }
+    case 'piratesHaven': {
+      for (const side of state.players) {
+        for (const monster of [...side.field, side.beside ?? null]) {
+          if (!monster || !isPirateCard(state, monster)) continue
+          const before = monster.hp
+          monster.hp = Math.min(monster.maxHp, monster.hp + 20)
+          recordHeal(state, monster.hp - before)
+          monster.havenDefense = (monster.havenDefense ?? 0) + 2
+          log(
+            state,
+            `${getMonster(monster.defId).name} heals ${monster.hp - before} and gains +2 defense this turn.`,
+          )
+        }
+      }
+      break
+    }
+    case 'wrathOfStorms': {
+      const hits: TargetRef[] = []
+      for (const side of state.players) {
+        for (let index = 0; index < side.field.length; index++) {
+          const monster = side.field[index]
+          if (!monster) continue
+          if (isPirateCard(state, monster)) continue
+          if (side.tributeSafe?.[monster.instanceId]) continue
+          hits.push({ kind: 'monster', player: side.id, slot: index })
+          monster.equipment.forEach((eq, equipmentIndex) => {
+            if (state.pirateTags?.includes(eq.instanceId)) return
+            hits.push({ kind: 'equipment', player: side.id, slot: index, equipmentIndex })
+          })
+        }
+        if (side.beside && !isPirateCard(state, side.beside) && !side.tributeSafe?.[side.beside.instanceId]) {
+          hits.push({ kind: 'monster', player: side.id, slot: BESIDE_SLOT })
+        }
+      }
+      for (const hit of hits) {
+        dealDamageToTarget(
+          state,
+          attacker,
+          hit,
+          60,
+          'electric',
+          false,
+          requiredEnergy,
+          false,
+          ['electric', 'water'],
+        )
+      }
+      break
+    }
+    case 'incineration': {
+      const candidates: TargetRef[] = []
+      for (const foe of livingOpponents(state, player.id)) {
+        for (let index = 0; index < foe.field.length; index++) {
+          if (foe.field[index]) candidates.push({ kind: 'monster', player: foe.id, slot: index })
+        }
+        if (foe.beside) candidates.push({ kind: 'monster', player: foe.id, slot: BESIDE_SLOT })
+      }
+      if (candidates.length === 0) break
+      if (candidates.length === 1) {
+        dealDamageToTarget(state, attacker, candidates[0]!, 70, 'fire', false, requiredEnergy)
+        break
+      }
+      state.pending = {
+        kind: 'incinerationPick',
+        owner: player.id,
+        slot,
+        candidates,
+        requiredEnergy,
+      }
+      log(state, 'Choose one monster to take 70 fire damage; the others take 20.')
+      break
+    }
+    case 'fury': {
+      const damage = attacker.furyDamage ?? 20
+      if (target) {
+        dealDamageToTarget(state, attacker, target, damage, 'fire', false, requiredEnergy)
+      }
+      attacker.furyDamage = damage + 10
+      state.cardMemory = state.cardMemory ?? {}
+      state.cardMemory[attacker.instanceId] = {
+        ...(state.cardMemory[attacker.instanceId] ?? {}),
+        furyDamage: attacker.furyDamage,
+      }
+      log(state, `Fury's base damage is now ${attacker.furyDamage}.`)
+      break
+    }
+    case 'legionGrows': {
+      const monsters = player.hand.filter((card) => getCard(card.defId).kind === 'monster')
+      if (monsters.length === 0 || player.field.every((slot) => slot !== null)) {
+        log(state, 'The Legion Grows has no legal play.')
+        break
+      }
+      state.pending = { kind: 'legionGrows', owner: player.id, slot }
+      log(state, 'Destroy a monster in your hand to place an Unending Legionary.')
+      break
+    }
+    case 'legionMarches': {
+      for (const monster of player.field) {
+        if (!monster || !isUnendingLegion(monster.defId)) continue
+        if (grantEnergy(state, monster, 1) > 0) {
+          log(state, `${getMonster(monster.defId).name} gains 1 energy.`)
+        }
+      }
+      break
+    }
+    case 'goldenEnergy': {
+      if (!target) break
+      dealDamageToTarget(state, attacker, target, 60, 'untyped', false, requiredEnergy)
+      const follow = { kind: 'goldenEnergy' as const, owner: player.id, slot }
+      if (state.pending?.kind === 'bloodlustChoice') state.pendingStack.push(follow)
+      else state.pending = follow
+      log(state, 'Choose a card to gain 1 energy.')
+      break
+    }
+    case 'monstersAndElements': {
+      state.pending = {
+        kind: 'playCards',
+        owner: player.id,
+        played: 0,
+        from: 'hand',
+        limit: 1,
+        freePlay: true,
+        monstersOnly: true,
+        followUp: 'elementalStrike',
+        sourceSlot: slot,
+        requiredEnergy,
+      }
+      log(state, 'You may play a monster for free, then choose a target for elemental damage.')
+      break
+    }
+    case 'shadowsRising': {
+      const hits = abilityTargets(state, player.id, attacker, {
+        id: 'shadows_rising',
+        name: 'Shadows Rising',
+        cost: { require: 0, spend: 0 },
+        effects: [{ type: 'damage', amount: 10, damageType: 'shadow' }],
+      })
+      if (hits.length === 0) {
+        log(state, 'Shadows Rising has no target.')
+        break
+      }
+      state.pending = {
+        kind: 'multiHit',
+        sourcePlayer: player.id,
+        sourceSlot: slot,
+        remaining: 3,
+        amount: 10,
+        damageType: 'shadow',
+        requiredEnergy,
+      }
+      log(state, 'Shadows Rising: choose a target for 10 shadow damage (3 remaining).')
+      break
+    }
+    case 'draggedToTheDeep': {
+      state.pending = { kind: 'draggedDeep', owner: player.id, slot, requiredEnergy }
+      log(state, 'Choose a withdrawn monster to drag forward.')
+      break
+    }
+    case 'feedTheBeast': {
+      const queue = state.players
+        .filter((side) => anyCardTargets(state).some((hit) => hit.player === side.id))
+        .map((side) => side.id)
+      if (queue.length === 0) {
+        log(state, 'Feed the Beast has no cards to choose.')
+        break
+      }
+      state.pending = {
+        kind: 'feedBeast',
+        owner: player.id,
+        slot,
+        requiredEnergy,
+        queue,
+      }
+      log(state, 'Choose a card belonging to each player.')
+      break
+    }
+    case 'chillingWinds': {
+      if (!target) break
+      const hit =
+        dealDamageToTarget(
+          state,
+          attacker,
+          target,
+          30,
+          'wind',
+          false,
+          requiredEnergy,
+          false,
+          ['wind', 'ice'],
+        ) ?? target
+      const chilled = targetMonster(state, hit)
+      if (chilled && chilled.hp > 0) {
+        chilled.chillSpendUntil = player.id
+        log(
+          state,
+          `${getMonster(chilled.defId).name}'s abilities cost an additional filled energy until your next turn.`,
+        )
+      }
+      break
+    }
+    case 'deepFreeze': {
+      const cards = anyCardTargets(state)
+      if (cards.length === 0) {
+        log(state, 'Deep Freeze has no cards to choose.')
+        break
+      }
+      state.pending = {
+        kind: 'deepFreeze',
+        sourcePlayer: player.id,
+        sourceSlot: slot,
+        remaining: Math.min(3, cards.length),
+        chosen: [],
+        requiredEnergy,
+      }
+      log(state, 'Choose up to three cards to freeze and deal 10 ice damage.')
+      break
+    }
+    case 'warcry': {
+      player.tribeAttackBonus = (player.tribeAttackBonus ?? 0) + 10
+      log(state, 'Your orcs, goblins, and trolls deal +10 damage this turn.')
+      const others = occupiedSlots(player).filter((candidate) => {
+        if (candidate === slot) return false
+        const monster = monsterAt(player, candidate)
+        return Boolean(monster && isPlunderer(identityDefId(monster)))
+      })
+      if (others.length === 0) break
+      state.pending = { kind: 'warcryPick', owner: player.id, slot }
+      log(state, 'You may let another orc, goblin, or troll use an ability without the team action.')
+      break
+    }
+    case 'viciousClaws': {
+      const stacks = attacker.bloodlustStacks ?? 0
+      const damage = 20 + stacks * 20
+      if (target) {
+        dealDamageToTarget(state, attacker, target, damage, 'untyped', false, requiredEnergy)
+      }
+      break
+    }
+    case 'feed': {
+      state.pending = {
+        kind: 'feedTarget',
+        owner: player.id,
+        slot,
+        ...(attacker.wingsAnyTarget ? { ignoreStance: true } : {}),
+      }
+      log(
+        state,
+        attacker.wingsAnyTarget
+          ? 'Choose a damaged monster for Feed (Wings ignores stance).'
+          : 'Choose an active damaged card for Feed.',
+      )
+      break
+    }
+    case 'shadowMatter': {
+      const hits = 1 + (attacker.bloodlustStacks ?? 0)
+      const wings = Boolean(attacker.wingsAnyTarget)
+      state.pending = {
+        kind: 'multiHit',
+        sourcePlayer: player.id,
+        sourceSlot: slot,
+        remaining: hits,
+        amount: 30,
+        damageType: 'shadow',
+        requiredEnergy,
+        // Wings expands Shadow Matter to any-card targets (incl. withdrawn / past Boneling locks).
+        ...(wings ? { scope: 'any' as const } : {}),
+      }
+      log(state, `Shadow Matter fires ${hits} time${hits === 1 ? '' : 's'}.`)
+      break
+    }
+    case 'wingsOfNight': {
+      attacker.extraAbilityUses = (attacker.extraAbilityUses ?? 0) + 1
+      attacker.wingsAnyTarget = true
+      log(state, `${getMonster(attacker.defId).name} may use another ability targeting any card.`)
+      break
+    }
+    case 'thornGrowth': {
+      healTarget(state, { kind: 'monster', player: player.id, slot }, 20)
+      break
+    }
+    case 'thorns': {
+      state.pending = {
+        kind: 'multiHit',
+        sourcePlayer: player.id,
+        sourceSlot: slot,
+        remaining: 2,
+        amount: 20,
+        damageType: 'untyped',
+        requiredEnergy,
+        amounts: [20, 10],
+      }
+      break
+    }
+    case 'overwhelm': {
+      const copies = player.field.filter((monster) => monster && isThornflower(monster.defId)).length
+      if (copies <= 0) break
+      state.pending = {
+        kind: 'multiHit',
+        sourcePlayer: player.id,
+        sourceSlot: slot,
+        remaining: copies,
+        amount: 20,
+        damageType: 'untyped',
+        requiredEnergy,
+      }
+      break
+    }
   }
 }
 
 function burnChosenCard(state: GameState, target: TargetRef, sourcePlayer: PlayerId): void {
   const monster = targetMonster(state, target)
   if (!monster || target.kind !== 'monster') return
-  if (applyStatus(monster, 'burn', 3, 1, undefined, target.player === state.activePlayer, sourcePlayer)) {
+  if (
+    applyStatus(
+      monster,
+      'burn',
+      DEFAULT_BURN_TURNS,
+      1,
+      undefined,
+      target.player === state.activePlayer,
+      sourcePlayer,
+    )
+  ) {
     log(state, `${getMonster(monster.defId).name} is burned.`)
   }
 }
@@ -2652,19 +3168,44 @@ function drawOne(state: GameState, player: PlayerState): void {
   log(state, `${player.name} draws a card.`)
 }
 
+function kingsInPlay(state: GameState): { player: PlayerId; slot: number }[] {
+  const found: { player: PlayerId; slot: number }[] = []
+  for (const side of state.players) {
+    if (side.beside && identityDefId(side.beside) === 'kings_of_the_ocean') {
+      found.push({ player: side.id, slot: BESIDE_SLOT })
+    }
+    for (let slot = 0; slot < side.field.length; slot++) {
+      const monster = side.field[slot]
+      if (monster && identityDefId(monster) === 'kings_of_the_ocean') {
+        found.push({ player: side.id, slot })
+      }
+    }
+  }
+  return found
+}
+
 function beginAssignGold(
   state: GameState,
   player: PlayerState,
   count: number,
   drawAfter = false,
+  sourceInstanceId?: string,
 ): void {
   if (count <= 0) return
-  if (affinitySlots(player).length === 0) {
+  const own = affinitySlots(player).length
+  const kings = kingsInPlay(state).length
+  if (own === 0 && kings === 0) {
     log(state, `${player.name} gains ${count} gold, but no Gold Affinity card can hold it.`)
     if (drawAfter) drawOne(state, player)
     return
   }
-  state.pending = { kind: 'assignGold', owner: player.id, remaining: count, drawAfter }
+  state.pending = {
+    kind: 'assignGold',
+    owner: player.id,
+    remaining: count,
+    drawAfter,
+    sourceInstanceId,
+  }
   log(state, `${player.name} gains ${count} gold. Choose a Gold Affinity card.`)
 }
 
@@ -3238,11 +3779,14 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       break
     }
     case 'USE_ABILITY': {
-      const monster = player.field[action.slot]
+      const monster = monsterAt(player, action.slot)
       if (!monster) throw new Error('No monster')
       const def = getMonster(monster.defId)
       const ability = monsterAbilities(monster).find((a) => a.id === action.abilityId)
       if (!ability) throw new Error('No ability')
+      if (ability.special === 'wingsOfNight' && monster.wingsAnyTarget) {
+        throw new Error('Wings of Night cannot chain')
+      }
       const extraLeftBefore = monster.extraAbilityUses ?? 0
 
       if (abilityNeedsChoice(ability) && !action.choice) {
@@ -3266,18 +3810,36 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       const goldRequire = action.goldRequire ?? 0
       const goldSpend = action.goldSpend ?? 0
       const gold = monster.gold ?? 0
+      const goldOnly = def.goldOnly === true
       if (
         goldRequire + goldSpend > gold ||
         goldRequire > require ||
         goldSpend > spend ||
-        monster.energy < require - goldRequire + (spend - goldSpend)
+        (!goldOnly && monster.energy < require - goldRequire + (spend - goldSpend)) ||
+        (goldOnly && require - goldRequire + (spend - goldSpend) > 0)
       ) {
         throw new Error('Cannot afford')
       }
       if (convertPlus) player.lingeringEnergy = false
       const energyBeforeSpend = monster.energy + gold
       monster.gold = gold - goldSpend
-      if (!convertPlus) spendEnergy(monster, spend - goldSpend)
+      const energySpent = !convertPlus && !goldOnly ? spend - goldSpend : 0
+      if (energySpent > 0) spendEnergy(monster, energySpent)
+      if (energySpent > 0) {
+        for (const foeId of opponentSeatIds(next, player.id)) {
+          const foe = next.players[foeId]!
+          for (const listener of [...foe.field, foe.beside ?? null]) {
+            if (!listener || identityDefId(listener) !== 'tenilius_icilius') continue
+            const gained = grantEnergy(next, listener, energySpent)
+            if (gained > 0) {
+              log(
+                next,
+                `Aqua Nova: ${getMonster(listener.defId).name} gains ${gained} energy.`,
+              )
+            }
+          }
+        }
+      }
       const requiredEnergy = convertPlus ? kept + priced.spend + extra : kept
 
       log(
@@ -3292,6 +3854,8 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
                 : ''
         }.`,
       )
+
+      const wings = Boolean(monster.wingsAnyTarget)
 
       if (ability.special) {
         resolveSpecialAbility(
@@ -3308,6 +3872,9 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
         resolveAbility(next, player, action.slot, ability, action.target, action.choice, requiredEnergy)
       }
 
+      // Clear after resolving so Feed can still see Wings for its target pending.
+      if (wings) monster.wingsAnyTarget = undefined
+
       const alreadyActed = next.actedSlots.includes(action.slot)
       const costsTeam = abilityCostsTeamAction(monster, ability)
       const useNormal = !alreadyActed && (!costsTeam || next.abilityUsesLeft > 0)
@@ -3319,7 +3886,7 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       } else if (!alreadyActed) {
         next.actedSlots.push(action.slot)
       }
-      const stalked = player.field[action.slot]
+      const stalked = monsterAt(player, action.slot)
       if (stalked?.stalkedBy?.length) {
         dealDamageToTarget(
           next,
@@ -3345,29 +3912,22 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       const card = pile[action.handIndex]
       const def = getCard(card.defId)
       if (def.kind !== 'monster') throw new Error('Not a monster')
-      pile.splice(action.handIndex, 1)
-      actor.field[action.slot] = {
-        instanceId: card.instanceId,
-        defId: card.defId,
-        hp: card.kept ? Math.min(card.kept.maxHp ?? def.maxHp, card.kept.hp) : def.maxHp,
-        maxHp: card.kept?.maxHp ?? def.maxHp,
-        stance: action.stance,
-        energy: card.kept?.energy ?? 0,
-        pendingEnergy: 0,
-        statuses: [],
-        equipment: card.kept?.equipment?.map((equipment) => ({ ...equipment })) ?? [],
-        ...(card.kept?.gold ? { gold: card.kept.gold } : {}),
-        ...(def.id === 'hollow_rogue' ? { enteredThisTurn: true } : {}),
+      if (def.id === 'relkar_goldflame' && actor.points < 6) {
+        throw new Error('Relkar needs 6 points')
       }
+      pile.splice(action.handIndex, 1)
+      const placed = playMonsterCard(next, actor, card, action.slot, action.stance)
+      if (!placed) break
       if (isBoneling(card.defId) && action.stance === 'withdrawn') {
         dieInsteadOfWithdraw(next, actor.id, action.slot)
       }
-      const placed = actor.field[action.slot]
       if (placed && playPending?.grantEnergy) grantEnergy(next, placed, playPending.grantEnergy)
       if (cardPlayCounts(playPending, undefined, next.recursion?.replayingNow === true)) noteCardPlay(next)
       log(
         next,
-        `${actor.name} plays ${def.name} ${action.stance} in slot ${action.slot + 1}.`,
+        def.besideRow
+          ? `${actor.name} plays ${def.name} beside the row.`
+          : `${actor.name} plays ${def.name} ${action.stance} in slot ${action.slot + 1}.`,
       )
       resumePlayCardsAfter(next, playPending)
       break
@@ -3443,12 +4003,17 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       monster.equipment.push({
         instanceId: card.instanceId,
         defId: card.defId,
-        hp: def.maxHp,
-        maxHp: def.maxHp,
+        hp: def.unbreakable ? 0 : def.maxHp,
+        maxHp: def.unbreakable ? 0 : def.maxHp,
       })
       if (card.defId === 'resilience') applyResilience(next, monster)
       if (cardPlayCounts(playPending, undefined, next.recursion?.replayingNow === true)) noteCardPlay(next)
       log(next, `${actor.name} attaches ${def.name} to ${getMonster(monster.defId).name}.`)
+      if (card.defId === 'yentir_starforged') {
+        actor.points -= 1
+        log(next, `${actor.name} loses 1 point for playing ${def.name}. Points: ${actor.points}`)
+        checkLosses(next)
+      }
       resumePlayCardsAfter(next, playPending)
       break
     }
@@ -3552,7 +4117,8 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
     case 'PENDING_TARGET': {
       const pending = next.pending
       if (!pending || (pending.kind !== 'multiHit' && pending.kind !== 'repeatGoo')) break
-      const source = next.players[pending.sourcePlayer].field[pending.sourceSlot]
+      const sourceOwner = next.players[pending.sourcePlayer]
+      const source = monsterAt(sourceOwner, pending.sourceSlot)
       if (!source) {
         clearPending(next)
         break
@@ -3563,7 +4129,7 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
           const skip = action.target.player === next.activePlayer
           applyStatus(target, 'goo', 1, 1, undefined, skip)
           if (pending.also === 'burn') {
-            applyStatus(target, 'burn', 3, 1, undefined, skip, pending.sourcePlayer)
+            applyStatus(target, 'burn', DEFAULT_BURN_TURNS, 1, undefined, skip, pending.sourcePlayer)
           }
           if (pending.also === 'frozen') {
             applyStatus(target, 'frozen', 2, 1, undefined, skip, pending.sourcePlayer)
@@ -3573,6 +4139,10 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       } else {
         let amount = pending.amount
         let damageType = pending.damageType
+        if (pending.amounts && pending.amounts.length > 0) {
+          const index = pending.amounts.length - pending.remaining
+          amount = pending.amounts[Math.max(0, index)] ?? pending.amount
+        }
         if (pending.strike === 'spear') {
           const roll = rollDie(next)
           amount = lensSuccessFaces(source, highFaces(2)).includes(roll) ? 30 : 20
@@ -3617,6 +4187,8 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
           pending.excludeInstanceIds.push(chosenId)
         }
         pending.remaining -= 1
+        // Bloodlust may have been nested on top of this multi-hit; leave it there.
+        if (next.pending?.kind === 'bloodlustChoice') break
         if (pending.remaining <= 0 || !listLegalActions(next).some((candidate) => candidate.type === 'PENDING_TARGET')) {
           clearPending(next)
         }
@@ -4002,9 +4574,15 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       clearPending(next)
       break
     }
-    case 'PORTAL_FINISH':
-      clearPending(next)
+    case 'PORTAL_FINISH': {
+      const pending = next.pending
+      if (pending?.kind === 'playCards' && pending.followUp === 'elementalStrike') {
+        beginElementalStrike(next, pending)
+      } else {
+        clearPending(next)
+      }
       break
+    }
     case 'ELDERS_PICK': {
       const pending = next.pending
       if (!pending || pending.kind !== 'eldersEye') break
@@ -4083,10 +4661,27 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
     case 'ASSIGN_GOLD': {
       const pending = next.pending
       if (!pending || pending.kind !== 'assignGold' || pending.owner !== player.id) break
-      const monster = player.field[action.slot]
-      if (!monster || !getMonster(monster.defId).goldAffinity) break
+      const targetPlayer = action.player ?? player.id
+      const host = next.players[targetPlayer]
+      const monster = monsterAt(host, action.slot)
+      if (!monster || !hasGoldAffinity(monster, next)) break
       monster.gold = (monster.gold ?? 0) + 1
       log(next, `${getMonster(monster.defId).name} receives 1 gold (now ${monster.gold}).`)
+      if (
+        identityDefId(monster) === 'kings_of_the_ocean' &&
+        pending.sourceInstanceId
+      ) {
+        for (const side of next.players) {
+          const source =
+            side.field.some((m) => m?.instanceId === pending.sourceInstanceId) ||
+            side.beside?.instanceId === pending.sourceInstanceId
+          if (!source) continue
+          side.tributeSafe = side.tributeSafe ?? {}
+          side.tributeSafe[pending.sourceInstanceId] = 1
+          log(next, 'Tribute: that card cannot be harmed by the Kings until their next turn ends.')
+          break
+        }
+      }
       pending.remaining -= 1
       if (pending.remaining <= 0) {
         const drawAfter = pending.drawAfter === true
@@ -4099,6 +4694,12 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       const pending = next.pending
       if (!pending || pending.kind !== 'fairyHeal') break
       healTarget(next, action.target, 10)
+      // Monstrous Growth nested over fairyHeal — spend this heal on the stacked prompt.
+      if (next.pending?.kind === 'thornGrowth') {
+        const stacked = next.pendingStack[next.pendingStack.length - 1]
+        if (stacked?.kind === 'fairyHeal') stacked.remaining -= 1
+        break
+      }
       pending.remaining -= 1
       if (pending.remaining <= 0) {
         clearPending(next)
@@ -4109,7 +4710,7 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
       }
       break
     }
-    case 'PLACE_WEED': {
+case 'PLACE_WEED': {
       const pending = next.pending
       if (!pending || pending.kind !== 'placeWeed') break
       const owner = next.players[pending.owner]
@@ -4492,7 +5093,7 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
         const hit = dealDamageToTarget(next, wizard, action.target, 40, 'blast') ?? action.target
         const monster = targetMonster(next, hit)
         if (monster && hit.kind === 'monster') {
-          applyStatus(monster, 'burn', 3, 1, undefined, false, owner.id)
+          applyStatus(monster, 'burn', DEFAULT_BURN_TURNS, 1, undefined, false, owner.id)
         }
       }
       clearPending(next)
@@ -4952,6 +5553,309 @@ function applyActionInner(state: GameState, action: GameAction): GameState {
         pending.remaining -= 1
       }
       if (pending.remaining <= 0 && next.pending === pending) clearPending(next)
+      break
+    }
+    case 'PLAY_SET_ASIDE': {
+      if (next.phase !== 'energy') break
+      const card = player.setAside
+      if (!card) break
+      const def = getCard(card.defId)
+      if (def.kind !== 'monster') break
+      player.setAside = null
+      const placed = playMonsterCard(next, player, card, action.slot, action.stance)
+      if (!placed) {
+        player.setAside = card
+        break
+      }
+      log(
+        next,
+        def.besideRow
+          ? `${player.name} plays ${def.name} from set-aside beside the row.`
+          : `${player.name} plays ${def.name} from set-aside ${action.stance} in slot ${action.slot + 1}.`,
+      )
+      finishEnergyPhase(next)
+      break
+    }
+    case 'INCINERATION_PICK': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'incinerationPick') break
+      const source = monsterAt(next.players[pending.owner], pending.slot)
+      const energy = pending.requiredEnergy ?? 0
+      if (source) {
+        const chosenKey = JSON.stringify(action.target)
+        dealDamageToTarget(next, source, action.target, 70, 'fire', false, energy)
+        for (const hit of pending.candidates) {
+          if (JSON.stringify(hit) === chosenKey) continue
+          if (!targetMonster(next, hit)) continue
+          dealDamageToTarget(next, source, hit, 20, 'fire', false, energy)
+        }
+      }
+      clearPending(next)
+      break
+    }
+    case 'BLOODLUST_ACCEPT': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'bloodlustChoice' || pending.owner !== player.id) break
+      const slainOwner = next.players[pending.slainOwner]
+      discardMonster(next, slainOwner, pending.slainSlot, 'slain', player.id, {
+        skipPointLoss: true,
+      })
+      const devadian = monsterAt(player, pending.slot)
+      if (devadian) {
+        devadian.maxHp += 40
+        devadian.hp += 40
+        devadian.bloodlustStacks = (devadian.bloodlustStacks ?? 0) + 1
+        grantEnergy(next, devadian, 1)
+        next.cardMemory = next.cardMemory ?? {}
+        next.cardMemory[devadian.instanceId] = {
+          ...(next.cardMemory[devadian.instanceId] ?? {}),
+          bloodlustStacks: devadian.bloodlustStacks,
+        }
+        log(
+          next,
+          `${getMonster(devadian.defId).name} claims Bloodlust (+40 HP, stronger Claws, +1 Shadow Matter hit).`,
+        )
+      }
+      clearPending(next)
+      clearFinishedMultiHit(next)
+      checkLosses(next)
+      break
+    }
+    case 'BLOODLUST_DECLINE': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'bloodlustChoice' || pending.owner !== player.id) break
+      discardMonster(
+        next,
+        next.players[pending.slainOwner],
+        pending.slainSlot,
+        'slain',
+        player.id,
+      )
+      clearPending(next)
+      clearFinishedMultiHit(next)
+      checkLosses(next)
+      break
+    }
+    case 'THORN_GROWTH_ACCEPT': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'thornGrowth' || pending.owner !== player.id) break
+      const anchor = monsterAt(player, action.besideSlot)
+      if (!anchor || !isThornflower(anchor.defId)) break
+      const insertAt = action.besideSlot < 0 ? 0 : action.besideSlot
+      const copy = makeCard(next, 'thornflower_monstrosity')
+      const def = getMonster('thornflower_monstrosity')
+      const sprout: FieldMonster = {
+        instanceId: copy.instanceId,
+        defId: copy.defId,
+        hp: def.maxHp,
+        maxHp: def.maxHp,
+        stance: 'active',
+        energy: 0,
+        pendingEnergy: 0,
+        statuses: [],
+        equipment: [],
+        pointsOverride: 0,
+      }
+      // Insert beside the chosen copy: after its slot, shifting the row.
+      const at = Math.min(player.field.length, insertAt + 1)
+      player.field.splice(at, 0, sprout)
+      if (next.activePlayer === player.id) {
+        next.actedSlots = next.actedSlots.map((slot) => (slot >= at ? slot + 1 : slot))
+        next.movedSlots = next.movedSlots.map((slot) => (slot >= at ? slot + 1 : slot))
+      }
+      log(next, `${player.name} creates and places a non-unique Thornflower Monstrosity worth 0 points.`)
+      clearPending(next)
+      finishFairyHealsIfDone(next)
+      break
+    }
+    case 'THORN_GROWTH_DECLINE': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'thornGrowth' || pending.owner !== player.id) break
+      const flower = monsterAt(player, pending.slot)
+      if (flower) {
+        const before = flower.hp
+        flower.hp = Math.min(flower.maxHp, flower.hp + pending.amount)
+        recordHeal(next, flower.hp - before)
+        log(
+          next,
+          `${getMonster(flower.defId).name} heals ${flower.hp - before} (now ${flower.hp} HP).`,
+        )
+      }
+      clearPending(next)
+      finishFairyHealsIfDone(next)
+      break
+    }
+    case 'LEGION_GROWS_DISCARD': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'legionGrows' || pending.owner !== player.id) break
+      const index = player.hand.findIndex((card) => card.instanceId === action.instanceId)
+      if (index < 0) break
+      const [card] = player.hand.splice(index, 1)
+      if (getCard(card.defId).kind !== 'monster') {
+        player.hand.splice(index, 0, card)
+        break
+      }
+      player.removed.push(card)
+      log(next, `${player.name} destroys ${getCard(card.defId).name}.`)
+      const open = player.field.findIndex((slot) => slot === null)
+      if (open < 0) {
+        clearPending(next)
+        break
+      }
+      const legion = makeCard(next, 'unending_legionary')
+      playMonsterCard(next, player, legion, open, 'active')
+      log(next, `${player.name} places an Unending Legionary.`)
+      clearPending(next)
+      break
+    }
+    case 'FEED_TARGET': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'feedTarget' || pending.owner !== player.id) break
+      const source = monsterAt(player, pending.slot)
+      const prey = targetMonster(next, action.target)
+      if (!source || !prey || action.target.kind !== 'monster') break
+      if (
+        (!pending.ignoreStance && prey.stance !== 'active') ||
+        prey.hp <= 0 ||
+        prey.hp >= prey.maxHp
+      ) {
+        break
+      }
+      dealDamageToTarget(next, source, action.target, 20)
+      const before = source.hp
+      source.hp = Math.min(source.maxHp, source.hp + 20)
+      recordHeal(next, source.hp - before)
+      log(next, `${getMonster(source.defId).name} heals ${source.hp - before}.`)
+      // Bloodlust nests over Feed; do not clearPending or Feed resumes and the kill sticks around.
+      if (next.pending?.kind === 'feedTarget') {
+        clearPending(next)
+      } else {
+        dropStackedPending(next, 'feedTarget')
+      }
+      break
+    }
+    case 'GOLDEN_ENERGY': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'goldenEnergy' || pending.owner !== player.id) break
+      const host = resolveTarget(next, action.target)?.monster ?? null
+      if (!host) break
+      const gained = grantEnergy(next, host, 1)
+      log(
+        next,
+        gained > 0
+          ? `${getMonster(host.defId).name} gains 1 energy from Golden Energy.`
+          : `${getMonster(host.defId).name} gains no energy.`,
+      )
+      clearPending(next)
+      break
+    }
+    case 'ELEMENTAL_STRIKE': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'elementalStrike' || pending.owner !== player.id) break
+      const source = monsterAt(player, pending.slot)
+      if (!source) {
+        clearPending(next)
+        break
+      }
+      dealDamageToTarget(
+        next,
+        source,
+        action.target,
+        40,
+        'fire',
+        false,
+        pending.requiredEnergy,
+        false,
+        [...ELEMENTAL_TYPES],
+      )
+      if (next.pending?.kind === 'elementalStrike') clearPending(next)
+      else dropStackedPending(next, 'elementalStrike')
+      break
+    }
+    case 'DRAGGED_DEEP': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'draggedDeep' || pending.owner !== player.id) break
+      const source = monsterAt(player, pending.slot)
+      const prey = targetMonster(next, action.target)
+      if (!source || !prey || action.target.kind !== 'monster' || prey.stance !== 'withdrawn') break
+      prey.stance = 'active'
+      log(next, `${getMonster(prey.defId).name} is dragged forward.`)
+      dealDamageToTarget(next, source, action.target, 40, 'untyped', false, pending.requiredEnergy)
+      if (next.pending?.kind === 'draggedDeep') clearPending(next)
+      else dropStackedPending(next, 'draggedDeep')
+      break
+    }
+    case 'FEED_BEAST': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'feedBeast' || pending.owner !== player.id) break
+      const source = monsterAt(player, pending.slot)
+      const nextPlayer = pending.queue[0]
+      if (!source || nextPlayer === undefined || action.target.player !== nextPlayer) break
+      dealDamageToTarget(next, source, action.target, 80, 'untyped', false, pending.requiredEnergy)
+      pending.queue.shift()
+      if (pending.queue.length === 0 || next.pending?.kind !== 'feedBeast') {
+        if (next.pending?.kind === 'feedBeast') clearPending(next)
+      }
+      break
+    }
+    case 'DEEP_FREEZE': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'deepFreeze') break
+      const sourceOwner = next.players[pending.sourcePlayer]
+      const source = monsterAt(sourceOwner, pending.sourceSlot)
+      const key = targetKey(action.target)
+      if (!source || pending.chosen.includes(key)) break
+      dealDamageToTarget(
+        next,
+        source,
+        action.target,
+        10,
+        'ice',
+        false,
+        pending.requiredEnergy,
+      )
+      if (action.target.kind === 'monster') {
+        const frozen = targetMonster(next, action.target)
+        if (frozen && frozen.hp > 0) {
+          applyStatus(
+            frozen,
+            'frozen',
+            3,
+            1,
+            undefined,
+            action.target.player === next.activePlayer,
+          )
+          log(next, `${getMonster(frozen.defId).name} is Frozen for 3 turns.`)
+        }
+      }
+      pending.chosen.push(key)
+      pending.remaining -= 1
+      if (
+        next.pending?.kind === 'deepFreeze' &&
+        (pending.remaining <= 0 ||
+          !listLegalActions(next).some((candidate) => candidate.type === 'DEEP_FREEZE'))
+      ) {
+        clearPending(next)
+      }
+      break
+    }
+    case 'WARCRY_PICK': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'warcryPick' || pending.owner !== player.id) break
+      const ally = monsterAt(player, action.slot)
+      if (!ally || !isPlunderer(identityDefId(ally)) || action.slot === pending.slot) break
+      ally.extraAbilityUses = (ally.extraAbilityUses ?? 0) + 1
+      log(
+        next,
+        `${getMonster(ally.defId).name} may use an ability without spending the team action.`,
+      )
+      clearPending(next)
+      break
+    }
+    case 'WARCRY_SKIP': {
+      const pending = next.pending
+      if (!pending || pending.kind !== 'warcryPick' || pending.owner !== player.id) break
+      clearPending(next)
       break
     }
     case 'END_TURN': {

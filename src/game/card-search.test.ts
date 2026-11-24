@@ -26,6 +26,11 @@ describe('card type search', () => {
     expect(cardMatchesSearchType('stormling', 'plant')).toBe(false)
     expect(cardMatchesSearchType('blob', 'blob')).toBe(true)
     expect(cardMatchesSearchType('green_fairy', 'plant')).toBe(false)
+    expect(cardMatchesSearchType('unending_legionary', 'unending_legion')).toBe(true)
+    expect(cardMatchesSearchType('unending_bannerman', 'unending_legion')).toBe(true)
+    expect(cardMatchesSearchType('unending_archer', 'unending_legion')).toBe(true)
+    expect(cardMatchesSearchType('relkar_goldflame', 'unending_legion')).toBe(true)
+    expect(cardMatchesSearchType('blob', 'unending_legion')).toBe(false)
   })
 
   it('matches dark charge and gold affinity', () => {

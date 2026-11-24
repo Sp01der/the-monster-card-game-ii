@@ -6,6 +6,7 @@ export type StoredDeck = {
   name: string
   counts: Record<string, number>
   topMonsterId: string | null
+  setAsideId: string | null
   updatedAt: number
 }
 
@@ -47,7 +48,10 @@ export function sanitizeCounts(counts: Record<string, number>): Record<string, n
   for (const [id, n] of Object.entries(counts)) {
     if (!Number.isInteger(n) || n <= 0) continue
     if (!CATALOG[id]) continue
-    next[id] = n
+    const card = getCard(id)
+    const unique =
+      (card.kind === 'monster' || card.kind === 'equipment') && card.unique === true
+    next[id] = unique ? Math.min(1, n) : n
   }
   return next
 }
@@ -56,10 +60,28 @@ export function sanitizeTop(
   counts: Record<string, number>,
   topMonsterId: string | null,
 ): string | null {
-  if (topMonsterId && (counts[topMonsterId] ?? 0) > 0 && getCard(topMonsterId).kind === 'monster') {
-    return topMonsterId
+  if (topMonsterId && (counts[topMonsterId] ?? 0) > 0) {
+    const card = getCard(topMonsterId)
+    if (card.kind === 'monster' && !card.unique) return topMonsterId
   }
-  return Object.keys(counts).find((id) => getCard(id).kind === 'monster') ?? null
+  return (
+    Object.keys(counts).find((id) => {
+      const card = getCard(id)
+      return card.kind === 'monster' && !card.unique
+    }) ?? null
+  )
+}
+
+export function sanitizeSetAside(
+  counts: Record<string, number>,
+  setAsideId: string | null,
+  topMonsterId: string | null,
+): string | null {
+  if (!setAsideId || setAsideId === topMonsterId) return null
+  if ((counts[setAsideId] ?? 0) < 1) return null
+  const card = getCard(setAsideId)
+  if (card.kind !== 'monster' || !card.unique) return null
+  return setAsideId
 }
 
 function newId(): string {
@@ -82,11 +104,14 @@ function sanitizeDeck(value: unknown): StoredDeck | null {
   }
   const counts = sanitizeCounts(countsInput)
   const top = typeof raw.topMonsterId === 'string' ? raw.topMonsterId : null
+  const topMonsterId = sanitizeTop(counts, top)
+  const aside = typeof raw.setAsideId === 'string' ? raw.setAsideId : null
   return {
     id: raw.id,
     name,
     counts,
-    topMonsterId: sanitizeTop(counts, top),
+    topMonsterId,
+    setAsideId: sanitizeSetAside(counts, aside, topMonsterId),
     updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : Date.now(),
   }
 }
@@ -142,14 +167,17 @@ export function createDeckStore(storage: DeckStorage) {
       name: string
       counts: Record<string, number>
       topMonsterId: string | null
+      setAsideId?: string | null
     }): StoredDeck {
       const decks = read()
       const counts = sanitizeCounts(input.counts)
+      const topMonsterId = sanitizeTop(counts, input.topMonsterId)
       const deck: StoredDeck = {
         id: input.id ?? newId(),
         name: input.name.trim() || 'Untitled deck',
         counts,
-        topMonsterId: sanitizeTop(counts, input.topMonsterId),
+        topMonsterId,
+        setAsideId: sanitizeSetAside(counts, input.setAsideId ?? null, topMonsterId),
         updatedAt: Date.now(),
       }
       const next = decks.some((existing) => existing.id === deck.id)

@@ -1,5 +1,13 @@
-import { getCard, getMonster, identityDefId } from './catalog'
-import { computeDamage, attackBonusFor, guardingGoldDefense, knightWindBonus, lensSuccessFaces, wearsLifestealBlade } from './damage'
+import { controlsGorruk, getCard, getMonster, identityDefId, isBoneling, isPlunderer } from './catalog'
+import {
+  computeDamage,
+  attackBonusFor,
+  effectiveDamageTypes,
+  guardingGoldDefense,
+  knightWindBonus,
+  lensSuccessFaces,
+  wearsLifestealBlade,
+} from './damage'
 import {
   applyStatus,
   checkLosses,
@@ -8,20 +16,25 @@ import {
   grantEnergy,
   isDamageProtected,
   isStone,
+  isThornflower,
   log,
+  monsterAt,
   recordHeal,
+  releaseProtection,
   resolveTarget,
   wakeAsleep,
 } from './helpers'
-import type {
-  AbilityChoice,
-  AbilityDef,
-  AbilityEffect,
-  DamageType,
-  FieldMonster,
-  GameState,
-  PlayerState,
-  TargetRef,
+import {
+  BESIDE_SLOT,
+  type AbilityChoice,
+  type AbilityDef,
+  type AbilityEffect,
+  type DamageType,
+  type FieldMonster,
+  type GameState,
+  type PlayerId,
+  type PlayerState,
+  type TargetRef,
 } from './types'
 import { rollDie } from './helpers'
 
@@ -85,15 +98,6 @@ export function takeLastDealt(): number {
   return dealt
 }
 
-function hitTypesIncludes(
-  damageType: DamageType,
-  damageTypes: DamageType[] | undefined,
-  kind: DamageType,
-): boolean {
-  if (damageTypes?.length) return damageTypes.includes(kind)
-  return damageType === kind
-}
-
 /** Each Ashling grows once after a card actually takes a fire damage packet. */
 function growAshlings(state: GameState): void {
   for (const side of state.players) {
@@ -136,6 +140,39 @@ function applyHitPoints(monster: FieldMonster, amount: number): boolean {
   return false
 }
 
+/** Horror of the Deep: a survivor rolls after each damaging hit. */
+function applyParalyzingFear(
+  state: GameState,
+  monster: FieldMonster,
+  owner: PlayerState,
+  slot: number,
+  horrorOwner: PlayerId,
+): void {
+  const roll = rollDie(state)
+  const name = getMonster(monster.defId).name
+  if (roll >= 5) {
+    log(state, `${name} resists Paralyzing Fear (${roll}).`)
+    return
+  }
+  if (monster.stance !== 'withdrawn') {
+    if (isBoneling(monster)) {
+      log(state, `${name} cannot withdraw and dies instead.`)
+      monster.hp = 0
+      discardMonster(state, owner, slot, 'slain', horrorOwner)
+      return
+    }
+    if (monster.protectingInstanceId) releaseProtection(state, monster)
+    monster.stance = 'withdrawn'
+    log(state, `${name} withdraws from Paralyzing Fear (${roll}).`)
+  } else {
+    log(state, `${name} is already withdrawn (Paralyzing Fear ${roll}).`)
+  }
+  if (roll <= 2) {
+    monster.paralyzedBy = horrorOwner
+    log(state, `${name} cannot act or gain energy until your next turn.`)
+  }
+}
+
 export function dealDamageToTarget(
   state: GameState,
   attacker: FieldMonster | null,
@@ -152,7 +189,7 @@ export function dealDamageToTarget(
     attacker?.enteredThisTurn === true && identityDefId(attacker) === 'hollow_rogue'
   if (rogueDouble) doubleBeforeDefense = true
   if (attacker && identityDefId(attacker) === 'larrathere_knight') {
-    const types = damageTypes?.length ? damageTypes : [damageType]
+    const types = effectiveDamageTypes(attacker, damageType, damageTypes)
     if (types.includes('wind')) {
       const owner = state.players.find((player) =>
         player.field.some((monster) => monster?.instanceId === attacker?.instanceId),
@@ -190,10 +227,26 @@ export function dealDamageToTarget(
   }
 
   const attackerOwner = attacker
-    ? state.players.find((player) =>
-        player.field.some((monster) => monster?.instanceId === attacker.instanceId),
+    ? state.players.find(
+        (player) =>
+          player.field.some((monster) => monster?.instanceId === attacker.instanceId) ||
+          player.beside?.instanceId === attacker.instanceId,
       )
     : undefined
+
+  if (
+    base > 0 &&
+    attacker &&
+    identityDefId(attacker) === 'kings_of_the_ocean' &&
+    resolved.player.tributeSafe?.[resolved.monster.instanceId]
+  ) {
+    log(
+      state,
+      `${getMonster(resolved.monster.defId).name} cannot be harmed by the Kings (Tribute).`,
+    )
+    return null
+  }
+
   if (
     base > 0 &&
     attacker &&
@@ -202,9 +255,10 @@ export function dealDamageToTarget(
     resolved.player.iceMirrorCharges > 0
   ) {
     resolved.player.iceMirrorCharges -= 1
-    const attackerSlot = attackerOwner.field.findIndex(
-      (monster) => monster?.instanceId === attacker.instanceId,
-    )
+    const attackerSlot =
+      attackerOwner.beside?.instanceId === attacker.instanceId
+        ? -1
+        : attackerOwner.field.findIndex((monster) => monster?.instanceId === attacker.instanceId)
     const amount = computeDamage({
       base,
       damageType,
@@ -225,26 +279,36 @@ export function dealDamageToTarget(
         : `${resolved.player.name}'s Ice Mirror reflects the attack; ${getMonster(attacker.defId).name} takes ${amount} damage (${Math.max(0, attacker.hp)} HP left).`,
     )
     if (amount > 0 && (endured || attacker.hp > 0)) wakeAsleep(state, attacker, amount)
-    if (!endured && attacker.hp <= 0 && attackerSlot >= 0) {
+    if (!endured && attacker.hp <= 0) {
       discardMonster(state, attackerOwner, attackerSlot, 'slain', resolved.player.id)
     }
     checkLosses(state)
-    return attackerSlot >= 0
-      ? { kind: 'monster', player: attackerOwner.id, slot: attackerSlot }
-      : null
+    return { kind: 'monster', player: attackerOwner.id, slot: attackerSlot }
   }
 
   if (target.kind === 'equipment') {
     const eq = resolved.monster.equipment[target.equipmentIndex]
     if (!eq) return null
     const eqDef = getCard(eq.defId)
-    if (eqDef.kind === 'equipment' && eqDef.indestructible) {
+    if (eqDef.kind === 'equipment' && (eqDef.indestructible || eqDef.unbreakable)) {
       log(state, `${eqDef.name} cannot be removed.`)
       return target
     }
     if (eqDef.kind === 'equipment' && eqDef.attackProof) {
       log(state, `${eqDef.name} is not harmed by the attack.`)
       return target
+    }
+    if (
+      base > 0 &&
+      attacker &&
+      identityDefId(attacker) === 'kings_of_the_ocean' &&
+      resolved.player.tributeSafe?.[resolved.monster.instanceId]
+    ) {
+      log(
+        state,
+        `${getMonster(resolved.monster.defId).name}'s gear cannot be harmed by the Kings (Tribute).`,
+      )
+      return null
     }
     const equipmentDamage = rogueDouble ? base * 2 : base
     eq.hp -= equipmentDamage
@@ -254,7 +318,10 @@ export function dealDamageToTarget(
       state,
       `${getCard(eq.defId).name} takes ${equipmentDamage} damage (${Math.max(0, eq.hp)} HP left).`,
     )
-    if (equipmentDamage > 0 && hitTypesIncludes(damageType, damageTypes, 'fire')) {
+    if (
+      equipmentDamage > 0 &&
+      effectiveDamageTypes(attacker, damageType, damageTypes).includes('fire')
+    ) {
       growAshlings(state)
     }
     if (eq.hp <= 0) {
@@ -265,7 +332,7 @@ export function dealDamageToTarget(
     return target
   }
 
-  const hitTypes = damageTypes?.length ? damageTypes : [damageType]
+  const hitTypes = effectiveDamageTypes(attacker, damageType, damageTypes)
   if (isStone(resolved.monster) && !hitTypes.includes('blast')) {
     log(state, `${getMonster(resolved.monster.defId).name} is Stone and takes no damage.`)
     return null
@@ -314,7 +381,52 @@ export function dealDamageToTarget(
 
   if (!endured && resolved.monster.hp <= 0) {
     const killer = attackerOwner?.id ?? state.activePlayer
-    discardMonster(state, resolved.player, resolved.slot, 'slain', killer)
+    if (
+      attacker &&
+      identityDefId(attacker) === 'lord_devadian' &&
+      attackerOwner &&
+      state.pending?.kind !== 'bloodlustChoice'
+    ) {
+      const points = resolved.monster.pointsOverride ?? getMonster(resolved.monster.defId).points
+      const devadianSlot =
+        attackerOwner.beside?.instanceId === attacker.instanceId
+          ? -1
+          : attackerOwner.field.findIndex((m) => m?.instanceId === attacker.instanceId)
+      // Nest over multi-hit (Shadow Matter) or any other open interaction.
+      if (state.pending) state.pendingStack.push(state.pending)
+      state.pending = {
+        kind: 'bloodlustChoice',
+        owner: attackerOwner.id,
+        slot: devadianSlot,
+        slainOwner: resolved.player.id,
+        slainSlot: resolved.slot,
+        points,
+      }
+      log(state, `${getMonster(attacker.defId).name} may claim Bloodlust.`)
+    } else {
+      discardMonster(state, resolved.player, resolved.slot, 'slain', killer)
+    }
+  } else if (
+    amount > 0 &&
+    attacker &&
+    identityDefId(attacker) === 'horror_of_the_deep' &&
+    attackerOwner
+  ) {
+    applyParalyzingFear(state, resolved.monster, resolved.player, resolved.slot, attackerOwner.id)
+  }
+  if (
+    amount > 0 &&
+    attacker &&
+    attackerOwner &&
+    attacker.instanceId !== resolved.monster.instanceId &&
+    isPlunderer(identityDefId(attacker)) &&
+    controlsGorruk(attackerOwner)
+  ) {
+    attacker.gold = (attacker.gold ?? 0) + 1
+    log(
+      state,
+      `${getMonster(attacker.defId).name} gains 1 gold from Shinies (now ${attacker.gold}).`,
+    )
   }
   healLifesteal(state, attacker, lastDealtDamage, stealing)
   checkLosses(state)
@@ -330,6 +442,27 @@ export function healTarget(state: GameState, target: TargetRef, amount: number):
     if (!eq) return
     eq.hp = Math.min(eq.maxHp, eq.hp + amount)
     log(state, `${getCard(eq.defId).name} heals ${amount} (now ${eq.hp} HP).`)
+    return
+  }
+
+  if (isThornflower(resolved.monster.defId)) {
+    // Nest over fairyHeal (and any other open prompt) so Growth is never skipped.
+    if (
+      state.pending?.kind === 'thornGrowth' &&
+      state.pending.owner === resolved.player.id &&
+      state.pending.slot === resolved.slot
+    ) {
+      state.pending.amount += amount
+      return
+    }
+    if (state.pending) state.pendingStack.push(state.pending)
+    state.pending = {
+      kind: 'thornGrowth',
+      owner: resolved.player.id,
+      slot: resolved.slot,
+      amount,
+    }
+    log(state, `${getMonster(resolved.monster.defId).name} may replace the heal with Monstrous Growth.`)
     return
   }
 
@@ -351,7 +484,7 @@ function effectsForChoice(choice: AbilityChoice): AbilityEffect[] {
   }
   return [
     { type: 'damage', amount: 10, damageType: 'fire' },
-    { type: 'status', status: 'burn', turns: 3 },
+    { type: 'status', status: 'burn', turns: 2 },
   ]
 }
 
@@ -431,13 +564,18 @@ function resolveOneEffect(
       )
     }
     case 'healSelf': {
-      const before = attacker.hp
-      attacker.hp = Math.min(attacker.maxHp, attacker.hp + effect.amount)
-      recordHeal(state, attacker.hp - before)
-      log(
-        state,
-        `${getMonster(attacker.defId).name} heals ${effect.amount} (now ${attacker.hp} HP).`,
+      const owner = state.players.find(
+        (player) =>
+          player.field.some((m) => m?.instanceId === attacker.instanceId) ||
+          player.beside?.instanceId === attacker.instanceId,
       )
+      if (!owner) return target
+      const slot =
+        owner.beside?.instanceId === attacker.instanceId
+          ? BESIDE_SLOT
+          : owner.field.findIndex((m) => m?.instanceId === attacker.instanceId)
+      if (slot < 0 && owner.beside?.instanceId !== attacker.instanceId) return target
+      healTarget(state, { kind: 'monster', player: owner.id, slot }, effect.amount)
       return target
     }
     case 'status': {
@@ -507,7 +645,7 @@ export function resolveAbility(
   choice: AbilityChoice | undefined,
   requiredEnergy = ability.cost.require,
 ): void {
-  const attacker = owner.field[slot]
+  const attacker = monsterAt(owner, slot)
   if (!attacker) return
 
   const repeats = ability.repeats ?? 1
@@ -528,18 +666,18 @@ export function resolveAbility(
     }
   }
   for (let r = 0; r < repeats; r++) {
-    if (!owner.field[slot]) break
-    const source = owner.field[slot]!
+    if (!monsterAt(owner, slot)) break
+    const source = monsterAt(owner, slot)!
     let effectiveTarget = target
     for (const effect of ability.effects) {
       // Finish remaining effects (e.g. Explode's removeSelf) even if a winner was set.
-      if (!owner.field[slot] && effect.type !== 'removeSelf') continue
+      if (!monsterAt(owner, slot) && effect.type !== 'removeSelf') continue
       effectiveTarget =
         resolveOneEffect(
           state,
           owner,
           slot,
-          owner.field[slot] ?? source,
+          monsterAt(owner, slot) ?? source,
           effect,
           effectiveTarget,
           choice,

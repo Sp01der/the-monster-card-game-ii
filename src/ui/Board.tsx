@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyAction,
+  BESIDE_SLOT,
   decisionPlayer,
   formatDamageType,
   getCard,
   getMonster,
   identityDefId,
+  hasGoldAffinity,
+  isPlunderer,
   guardingGoldDefense,
   knightWindBonus,
   isUndoablePhaseAction,
   monsterAbilities,
   listLegalActions,
+  monsterAt,
   type AbilityChoice,
   type GameAction,
   type GameState,
@@ -64,6 +68,7 @@ type UiSel =
   | { kind: 'darkChargeDiscard' }
   | { kind: 'darkChargeTarget'; discardInstanceId: string }
   | { kind: 'etherealReturn'; instanceId: string }
+  | { kind: 'setAside' }
 
 function targetKey(t: TargetRef): string {
   if (t.kind === 'monster') return `m-${t.player}-${t.slot}`
@@ -133,15 +138,15 @@ function describeAction(state: GameState, action: GameAction): string {
     case 'CONTINUE_OPENING_HAND':
       return 'Continue'
     case 'WITHDRAW':
-      return `Withdraw ${getMonster(state.players[state.activePlayer].field[action.slot]!.defId).name}`
+      return `Withdraw ${getMonster(monsterAt(state.players[state.activePlayer], action.slot)!.defId).name}`
     case 'ADVANCE':
-      return `Advance ${getMonster(state.players[state.activePlayer].field[action.slot]!.defId).name}`
+      return `Advance ${getMonster(monsterAt(state.players[state.activePlayer], action.slot)!.defId).name}`
     case 'ATTACH_ENERGY':
-      return `Attach energy to ${getMonster(state.players[state.activePlayer].field[action.slot]!.defId).name}`
+      return `Attach energy to ${getMonster(monsterAt(state.players[state.activePlayer], action.slot)!.defId).name}`
     case 'UNGOO':
-      return `Ungoo ${getMonster(state.players[state.activePlayer].field[action.slot]!.defId).name}`
+      return `Ungoo ${getMonster(monsterAt(state.players[state.activePlayer], action.slot)!.defId).name}`
     case 'USE_ABILITY': {
-      const m = state.players[state.activePlayer].field[action.slot]!
+      const m = monsterAt(state.players[state.activePlayer], action.slot)!
       const ab = monsterAbilities(m).find((a) => a.id === action.abilityId)!
       const choice =
         action.choice === 'firePunchFull'
@@ -188,9 +193,11 @@ function describeAction(state: GameState, action: GameAction): string {
     case 'MARCH_FINISH':
       return 'Finish marching'
     case 'PORTAL_FINISH':
-      return state.pending?.kind === 'playCards' && state.pending.effectsOnly
-        ? 'Finish without playing'
-        : 'Finish playing cards'
+      return state.pending?.kind === 'playCards' && state.pending.followUp === 'elementalStrike'
+        ? 'Skip the free monster'
+        : state.pending?.kind === 'playCards' && state.pending.effectsOnly
+          ? 'Finish without playing'
+          : 'Finish playing cards'
     case 'SPY_MARK':
       return 'Mark this card'
     case 'SPY_SKIP':
@@ -225,8 +232,45 @@ function describeAction(state: GameState, action: GameAction): string {
       return 'Attach the Keystone'
     case 'KEYSTONE_CANCEL':
       return 'Cancel Keystone'
-    case 'ASSIGN_GOLD':
-      return `Give gold to ${getMonster(state.players[state.activePlayer].field[action.slot]!.defId).name}`
+    case 'ASSIGN_GOLD': {
+      const seat = action.player ?? state.activePlayer
+      const host = monsterAt(state.players[seat]!, action.slot)
+      return host
+        ? `Give gold to ${getMonster(host.defId).name}`
+        : 'Give gold'
+    }
+    case 'PLAY_SET_ASIDE':
+      return action.slot === BESIDE_SLOT
+        ? 'Play Unique beside the row'
+        : `Play Unique ${action.stance} in slot ${action.slot + 1}`
+    case 'INCINERATION_PICK':
+      return 'Deal 70 fire'
+    case 'BLOODLUST_ACCEPT':
+      return 'Claim Bloodlust'
+    case 'BLOODLUST_DECLINE':
+      return 'Normal slain'
+    case 'THORN_GROWTH_ACCEPT':
+      return `Grow beside slot ${action.besideSlot + 1}`
+    case 'THORN_GROWTH_DECLINE':
+      return 'Take the heal'
+    case 'LEGION_GROWS_DISCARD':
+      return 'Destroy this monster'
+    case 'FEED_TARGET':
+      return 'Feed'
+    case 'GOLDEN_ENERGY':
+      return 'Give 1 energy'
+    case 'ELEMENTAL_STRIKE':
+      return '40 elemental damage'
+    case 'DRAGGED_DEEP':
+      return 'Drag forward'
+    case 'FEED_BEAST':
+      return '80 damage'
+    case 'DEEP_FREEZE':
+      return 'Freeze and 10 ice'
+    case 'WARCRY_PICK':
+      return 'Free ability'
+    case 'WARCRY_SKIP':
+      return 'Skip'
     case 'HOARD_CHOICE':
       return action.mode === 'gold' ? 'Gain 3 gold' : 'Gain 1 gold and draw a card'
     case 'FAIRY_HEAL':
@@ -710,8 +754,58 @@ export function Board({
     prompt = `Give this gold to a Gold Affinity card (${state.pending.remaining} remaining).`
     for (const action of legal) {
       if (action.type === 'ASSIGN_GOLD') {
-        highlightTargets.add(`mon-${state.pending.owner}-${action.slot}`)
+        const seat = action.player ?? state.pending.owner
+        highlightTargets.add(`mon-${seat}-${action.slot}`)
       }
+    }
+  } else if (state.pending?.kind === 'incinerationPick') {
+    prompt = 'Choose one monster to take 70 fire damage; the others take 20.'
+    for (const action of legal) {
+      if (action.type === 'INCINERATION_PICK') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'bloodlustChoice') {
+    prompt = 'Bloodlust: skip the point loss and empower Devadian?'
+  } else if (state.pending?.kind === 'thornGrowth') {
+    prompt = 'Replace this heal with a Thornflower copy, or take the heal.'
+  } else if (state.pending?.kind === 'legionGrows') {
+    prompt = 'Destroy a monster in your hand to place an Unending Legionary.'
+  } else if (state.pending?.kind === 'feedTarget') {
+    prompt = state.pending.ignoreStance
+      ? 'Choose a damaged monster for Feed (Wings ignores stance).'
+      : 'Choose an active damaged monster for Feed.'
+    for (const action of legal) {
+      if (action.type === 'FEED_TARGET') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'goldenEnergy') {
+    prompt = 'Choose a card to gain 1 energy.'
+    for (const action of legal) {
+      if (action.type === 'GOLDEN_ENERGY') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'elementalStrike') {
+    prompt = 'Choose a target for 40 damage of every elemental type.'
+    for (const action of legal) {
+      if (action.type === 'ELEMENTAL_STRIKE') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'draggedDeep') {
+    prompt = 'Choose a withdrawn monster to drag forward.'
+    for (const action of legal) {
+      if (action.type === 'DRAGGED_DEEP') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'feedBeast') {
+    const who = state.players[state.pending.queue[0] ?? 0]?.name ?? 'a player'
+    prompt = `Feed the Beast: choose a card controlled by ${who}.`
+    for (const action of legal) {
+      if (action.type === 'FEED_BEAST') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'deepFreeze') {
+    prompt = `Deep Freeze: choose a card (${state.pending.remaining} remaining).`
+    for (const action of legal) {
+      if (action.type === 'DEEP_FREEZE') highlightTargets.add(targetKey(action.target))
+    }
+  } else if (state.pending?.kind === 'warcryPick') {
+    prompt = 'Choose another orc, goblin, or troll to act without the team action, or skip.'
+    for (const action of legal) {
+      if (action.type === 'WARCRY_PICK') highlightTargets.add(`mon-${state.pending.owner}-${action.slot}`)
     }
   } else if (state.pending?.kind === 'hoardChoice') {
     prompt = 'Treasure Hoard: gain 3 gold, or gain 1 gold and draw a card.'
@@ -876,6 +970,13 @@ export function Board({
     for (const action of legal) {
       if (action.type === 'RETURN_ETHEREAL' && action.instanceId === sel.instanceId) {
         highlightTargets.add(`slot-${active.id}-${action.slot}-${action.stance}`)
+      }
+    }
+  } else if (sel.kind === 'setAside') {
+    prompt = 'Choose a slot for your set-aside Unique.'
+    for (const a of legal) {
+      if (a.type === 'PLAY_SET_ASIDE') {
+        highlightTargets.add(`slot-${active.id}-${a.slot}-${a.stance}`)
       }
     }
   } else if (sel.kind === 'hand') {
@@ -1113,11 +1214,13 @@ export function Board({
       state.bannerEnergyPool > 0 ? `${state.bannerEnergyPool} legion energy` : null,
     ].filter(Boolean)
     const remaining = pools.length > 0 ? pools.join(' and ') : 'no energy'
+    const canPlayAside = legal.some((a) => a.type === 'PLAY_SET_ASIDE')
+    const asideHint = canPlayAside ? ' You may play your set-aside Unique.' : ''
     prompt = legal.some((a) => a.type === 'DARK_CHARGE')
       ? pools.length > 0
-        ? `Distribute ${remaining}. You may Dark Charge.`
-        : 'You may Dark Charge, or end your turn.'
-      : `Distribute ${remaining}, or skip the rest.`
+        ? `Distribute ${remaining}. You may Dark Charge.${asideHint}`
+        : `You may Dark Charge, or end your turn.${asideHint}`
+      : `Distribute ${remaining}, or skip the rest.${asideHint}`
   } else if (state.phase === 'draw') {
     prompt = 'Click your draw pile to draw, or skip.'
   } else if (state.phase === 'main') {
@@ -1147,10 +1250,18 @@ export function Board({
       if (action) dispatch(action)
       return
     }
-    if (state.pending?.kind === 'assignGold' && playerId === state.pending.owner) {
-      const action = legal.find((a) => a.type === 'ASSIGN_GOLD' && a.slot === slot)
-      if (action) dispatch(action)
-      return
+    if (state.pending?.kind === 'assignGold') {
+      const goldOwner = state.pending.owner
+      const action = legal.find(
+        (a) =>
+          a.type === 'ASSIGN_GOLD' &&
+          a.slot === slot &&
+          (a.player ?? goldOwner) === playerId,
+      )
+      if (action) {
+        dispatch(action)
+        return
+      }
     }
     if (state.pending?.kind === 'march' && playerId === state.pending.owner) {
       const action = legal.find((a) => a.type === 'MARCH_TOGGLE' && a.slot === slot)
@@ -1256,6 +1367,44 @@ export function Board({
       if (action) dispatch(action)
       return
     }
+    if (state.pending?.kind === 'incinerationPick') {
+      const action = legal.find(
+        (a) => a.type === 'INCINERATION_PICK' && actionsEqualTargets(a.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'feedTarget') {
+      const action = legal.find(
+        (a) => a.type === 'FEED_TARGET' && actionsEqualTargets(a.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (
+      state.pending?.kind === 'goldenEnergy' ||
+      state.pending?.kind === 'elementalStrike' ||
+      state.pending?.kind === 'draggedDeep' ||
+      state.pending?.kind === 'feedBeast' ||
+      state.pending?.kind === 'deepFreeze'
+    ) {
+      const action = legal.find(
+        (a) =>
+          (a.type === 'GOLDEN_ENERGY' ||
+            a.type === 'ELEMENTAL_STRIKE' ||
+            a.type === 'DRAGGED_DEEP' ||
+            a.type === 'FEED_BEAST' ||
+            a.type === 'DEEP_FREEZE') &&
+          actionsEqualTargets(a.target, clicked),
+      )
+      if (action) dispatch(action)
+      return
+    }
+    if (state.pending?.kind === 'warcryPick' && playerId === state.pending.owner) {
+      const action = legal.find((a) => a.type === 'WARCRY_PICK' && a.slot === slot)
+      if (action) dispatch(action)
+      return
+    }
     if (state.pending?.kind === 'starbeamEnergy') {
       const action = legal.find(
         (a) => a.type === 'STARBEAM_ENERGY' && actionsEqualTargets(a.target, clicked),
@@ -1357,6 +1506,16 @@ export function Board({
       )
       if (action) dispatch(action)
       return
+    }
+    if (sel.kind === 'setAside' && stance && playerId === active.id) {
+      const playAside = legal.find(
+        (a) =>
+          a.type === 'PLAY_SET_ASIDE' && a.slot === slot && a.stance === stance,
+      )
+      if (playAside) {
+        dispatch(playAside)
+        return
+      }
     }
     if (sel.kind === 'hand') {
       const replace = legal.find(
@@ -1717,6 +1876,23 @@ export function Board({
       if (action) dispatch(action)
       return
     }
+    if (
+      state.pending?.kind === 'goldenEnergy' ||
+      state.pending?.kind === 'feedBeast' ||
+      state.pending?.kind === 'deepFreeze' ||
+      state.pending?.kind === 'elementalStrike'
+    ) {
+      const action = legal.find(
+        (a) =>
+          (a.type === 'GOLDEN_ENERGY' ||
+            a.type === 'FEED_BEAST' ||
+            a.type === 'DEEP_FREEZE' ||
+            a.type === 'ELEMENTAL_STRIKE') &&
+          actionsEqualTargets(a.target, t),
+      )
+      if (action) dispatch(action)
+      return
+    }
     if (state.pending?.kind === 'multiHit') {
       const action = legal.find(
         (a) => a.type === 'PENDING_TARGET' && actionsEqualTargets(a.target, t),
@@ -1912,7 +2088,7 @@ export function Board({
 
       <section className="center-panel">
         <p className="prompt">{prompt}{rallyFirst ? ' Now choose the second monster.' : ''}</p>
-        {legal.some((action) => action.type === 'PEGASUS_MOVE' || action.type === 'CHOOSE_OPPONENT' || action.type === 'VERIDIAN_PAY' || action.type === 'BLOODCRAFT_PICK' || action.type === 'HAUNTED_PICK' || action.type === 'FIREBALL_DISCARD' || action.type === 'TOME_PICK' || action.type === 'SUMMON_TYPE' || action.type === 'ENCHANT_STONE' || action.type === 'TAX_GIVE' || action.type === 'STONE_CURE' || action.type === 'STONE_KEEP' || action.type === 'ARROW_SKIP') && (
+        {legal.some((action) => action.type === 'PEGASUS_MOVE' || action.type === 'CHOOSE_OPPONENT' || action.type === 'VERIDIAN_PAY' || action.type === 'BLOODCRAFT_PICK' || action.type === 'HAUNTED_PICK' || action.type === 'FIREBALL_DISCARD' || action.type === 'LEGION_GROWS_DISCARD' || action.type === 'TOME_PICK' || action.type === 'SUMMON_TYPE' || action.type === 'ENCHANT_STONE' || action.type === 'TAX_GIVE' || action.type === 'STONE_CURE' || action.type === 'STONE_KEEP' || action.type === 'ARROW_SKIP') && (
           <div className="chip-row">
             {legal.flatMap((action) => {
               if (action.type === 'CHOOSE_OPPONENT') {
@@ -1958,6 +2134,18 @@ export function Board({
                 return [(
                   <button key={action.instanceId} type="button" className="chip" onClick={() => dispatch(action)}>
                     Discard {card ? getCard(card.defId).name : 'card'}
+                  </button>
+                )]
+              }
+              if (action.type === 'LEGION_GROWS_DISCARD') {
+                const owner =
+                  state.pending?.kind === 'legionGrows'
+                    ? state.players[state.pending.owner]
+                    : active
+                const card = owner.hand.find((entry) => entry.instanceId === action.instanceId)
+                return [(
+                  <button key={action.instanceId} type="button" className="chip" onClick={() => dispatch(action)}>
+                    Destroy {card ? getCard(card.defId).name : 'monster'}
                   </button>
                 )]
               }
@@ -2013,9 +2201,23 @@ export function Board({
               Dark Charge
             </button>
           )}
+          {legal.some((a) => a.type === 'PLAY_SET_ASIDE') && sel.kind === 'none' && (
+            <button
+              type="button"
+              className="primary"
+              onClick={() => setSel({ kind: 'setAside' })}
+            >
+              Play set-aside Unique
+            </button>
+          )}
           {(sel.kind === 'darkChargeDiscard' || sel.kind === 'darkChargeTarget') && (
             <button type="button" className="secondary" onClick={() => setSel({ kind: 'none' })}>
               Cancel Dark Charge
+            </button>
+          )}
+          {sel.kind === 'setAside' && (
+            <button type="button" className="secondary" onClick={() => setSel({ kind: 'none' })}>
+              Cancel Unique
             </button>
           )}
           {sel.kind === 'etherealReturn' && (
@@ -2056,7 +2258,7 @@ export function Board({
           <div className="ability-choice">
             <p className="muted">
               Choose a target for{' '}
-              {monsterAbilities(active.field[sel.slot]!).find((a) => a.id === sel.abilityId)?.name}.
+              {monsterAbilities(monsterAt(active, sel.slot)!).find((a) => a.id === sel.abilityId)?.name}.
               <button type="button" className="linkish" onClick={() => setSel({ kind: 'none' })}>
                 cancel
               </button>
@@ -2397,6 +2599,73 @@ export function Board({
           </div>
         )}
 
+        {state.pending?.kind === 'bloodlustChoice' && (
+          <div className="ability-choice">
+            <h3>Bloodlust</h3>
+            <div className="chip-row">
+              {legal
+                .filter(
+                  (action) =>
+                    action.type === 'BLOODLUST_ACCEPT' || action.type === 'BLOODLUST_DECLINE',
+                )
+                .map((action) => (
+                  <button
+                    key={action.type}
+                    type="button"
+                    className="chip"
+                    onClick={() => dispatch(action)}
+                  >
+                    {describeAction(state, action)}
+                  </button>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {state.pending?.kind === 'warcryPick' && (
+          <div className="ability-choice">
+            <h3>Warcry</h3>
+            <div className="chip-row">
+              {legal
+                .filter((action) => action.type === 'WARCRY_SKIP')
+                .map((action) => (
+                  <button
+                    key={action.type}
+                    type="button"
+                    className="chip"
+                    onClick={() => dispatch(action)}
+                  >
+                    {describeAction(state, action)}
+                  </button>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {state.pending?.kind === 'thornGrowth' && (
+          <div className="ability-choice">
+            <h3>Monstrous Growth</h3>
+            <div className="chip-row">
+              {legal
+                .filter(
+                  (action) =>
+                    action.type === 'THORN_GROWTH_ACCEPT' ||
+                    action.type === 'THORN_GROWTH_DECLINE',
+                )
+                .map((action, index) => (
+                  <button
+                    key={index}
+                    type="button"
+                    className="chip"
+                    onClick={() => dispatch(action)}
+                  >
+                    {describeAction(state, action)}
+                  </button>
+                ))}
+            </div>
+          </div>
+        )}
+
         {state.pending?.kind === 'rainChoice' && (
           <div className="ability-choice">
             <h3>Choose Rain of Goo mode</h3>
@@ -2498,10 +2767,18 @@ export function Board({
             const rewinding =
               state.pending?.kind === 'rewindDiscard' &&
               (!vsComputer || state.pending.owner === handOwner.id)
+            const legionDestroy =
+              state.pending?.kind === 'legionGrows' &&
+              (!vsComputer || state.pending.owner === handOwner.id) &&
+              legal.some(
+                (action) =>
+                  action.type === 'LEGION_GROWS_DISCARD' && action.instanceId === card.instanceId,
+              )
             const playable =
               !inputLocked &&
               chooser === handOwner.id &&
               (rewinding ||
+                legionDestroy ||
                 legal.some(
                   (a) =>
                     (a.type === 'PLAY_MONSTER' ||
@@ -2528,6 +2805,15 @@ export function Board({
                       (action) => action.type === 'REWIND_DISCARD' && action.instanceId === card.instanceId,
                     )
                     if (discard) dispatch(discard)
+                    return
+                  }
+                  if (state.pending?.kind === 'legionGrows') {
+                    const destroy = legal.find(
+                      (action) =>
+                        action.type === 'LEGION_GROWS_DISCARD' &&
+                        action.instanceId === card.instanceId,
+                    )
+                    if (destroy) dispatch(destroy)
                     return
                   }
                   setRallyFirst(null)
@@ -3395,7 +3681,14 @@ function PlayerRow({
                   field={monster}
                   extraDefense={guardingGoldDefense(game, monster)}
                   teamAttackBonus={
-                    game.activePlayer === player.id ? (player.attackBonus ?? 0) : 0
+                    game.activePlayer === player.id
+                      ? (player.attackBonus ?? 0) +
+                        (isPlunderer(identityDefId(monster)) ? (player.tribeAttackBonus ?? 0) : 0)
+                      : 0
+                  }
+                  grantedGoldAffinity={
+                    hasGoldAffinity(monster, game) &&
+                    getMonster(identityDefId(monster)).goldAffinity !== true
                   }
                   windDamageBonus={
                     identityDefId(monster) === 'larrathere_knight'
@@ -3489,7 +3782,14 @@ function PlayerRow({
                   field={protector}
                   extraDefense={guardingGoldDefense(game, protector)}
                   teamAttackBonus={
-                    game.activePlayer === player.id ? (player.attackBonus ?? 0) : 0
+                    game.activePlayer === player.id
+                      ? (player.attackBonus ?? 0) +
+                        (isPlunderer(identityDefId(protector)) ? (player.tribeAttackBonus ?? 0) : 0)
+                      : 0
+                  }
+                  grantedGoldAffinity={
+                    hasGoldAffinity(protector, game) &&
+                    getMonster(identityDefId(protector)).goldAffinity !== true
                   }
                   windDamageBonus={
                     identityDefId(protector) === 'larrathere_knight'
@@ -3571,6 +3871,92 @@ function PlayerRow({
             )
           })}
         </div>
+
+        {(player.beside ||
+          legal.some(
+            (action) =>
+              (action.type === 'PLAY_MONSTER' || action.type === 'PLAY_SET_ASIDE') &&
+              action.slot === BESIDE_SLOT &&
+              you,
+          ) ||
+          highlightTargets.has(`mon-${player.id}-${BESIDE_SLOT}`) ||
+          highlightTargets.has(`m-${player.id}-${BESIDE_SLOT}`)) && (
+          <div className="beside-zone">
+            <span className="beside-label">Beside</span>
+            {player.beside ? (
+              <div
+                role="button"
+                tabIndex={0}
+                className={`tcg-card field-slot monster stance-active${
+                  highlightTargets.has(`mon-${player.id}-${BESIDE_SLOT}`) ||
+                  highlightTargets.has(`m-${player.id}-${BESIDE_SLOT}`)
+                    ? ' highlight'
+                    : ''
+                }${you && selectedSlot === BESIDE_SLOT ? ' selected' : ''}`}
+                onClick={() => onSlotClick(player.id, BESIDE_SLOT, 'active')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onSlotClick(player.id, BESIDE_SLOT, 'active')
+                  }
+                }}
+              >
+                <CardFace
+                  defId={player.beside.defId}
+                  field={player.beside}
+                  extraDefense={guardingGoldDefense(game, player.beside)}
+                  teamAttackBonus={
+                    game.activePlayer === player.id
+                      ? (player.attackBonus ?? 0) +
+                        (isPlunderer(identityDefId(player.beside))
+                          ? (player.tribeAttackBonus ?? 0)
+                          : 0)
+                      : 0
+                  }
+                  grantedGoldAffinity={
+                    hasGoldAffinity(player.beside, game) &&
+                    getMonster(identityDefId(player.beside)).goldAffinity !== true
+                  }
+                  usableAbilityIds={
+                    new Set(
+                      legal
+                        .filter(
+                          (a) => a.type === 'USE_ABILITY' && a.slot === BESIDE_SLOT && you,
+                        )
+                        .map((a) => (a.type === 'USE_ABILITY' ? a.abilityId : '')),
+                    )
+                  }
+                  selectedAbilityId={
+                    selectedAbility?.slot === BESIDE_SLOT ? selectedAbility.abilityId : null
+                  }
+                  onAbilityClick={
+                    you
+                      ? (abilityId) => onAbilityClick(player.id, BESIDE_SLOT, abilityId)
+                      : undefined
+                  }
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                className={`tcg-card field-slot empty zone-empty${
+                  highlightTargets.has(`slot-${player.id}-${BESIDE_SLOT}-active`)
+                    ? ' highlight'
+                    : ''
+                }`}
+                onClick={() => onSlotClick(player.id, BESIDE_SLOT, 'active')}
+              >
+                <span>Beside</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {player.setAside && (
+          <div className="set-aside-chip muted">
+            Set aside: {getCard(player.setAside.defId).name}
+          </div>
+        )}
 
         {compact ? (
           <button

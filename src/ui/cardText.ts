@@ -114,6 +114,21 @@ const ABILITY_TEXT: Record<string, string> = {
   vanish: 'Return this card to your hand. It keeps its current energy, HP, gold, and equipment.',
   ember_punch: '20 fire damage.',
   sudden_blaze: 'This card takes 30 damage and burns 3 cards.',
+  hurricane: '50 wind damage.',
+  hail_to_the_kings: 'Choose a card you own. It becomes a Pirate card.',
+  pirates_haven: 'All pirate cards heal 20 HP and gain +2 defense for this turn.',
+  wrath_of_storms: 'All non-pirate cards take 60 electric/water damage.',
+  flaming_fists: '40 fire damage and burn.',
+  kalung_fireball: 'Discard a card. 40 blast damage and burn.',
+  incineration:
+    'Choose one enemy monster to take 70 fire damage; all other enemy monsters take 20 fire damage.',
+  legion_grows: 'Destroy a monster card in your hand. Create and place a free Unending Legionary.',
+  legion_marches: 'All cards part of the Unending Legion gain one energy, including this one.',
+  feed: 'Choose an active card which has taken damage. It takes 20 damage and this card heals 20.',
+  wings_of_night:
+    'This card may use another ability this turn targeting any card, ignoring usual stance and Boneling limits. The ability still has an energy cost.',
+  thorns: '20 damage. 10 damage.',
+  overwhelm: 'For every Thornflower Monstrosity you control deal 20 damage.',
   healing_light: 'Remove all statuses from a target. Heal 20 HP.',
   chorus: '20 light damage, plus 10 for each other monster you control',
   fire_sword: '40 fire damage and burn.',
@@ -166,8 +181,8 @@ const ABILITY_TEXT: Record<string, string> = {
   theft: 'Take an equipment from any active monster and attach it to this card.',
   loot_collect: 'Gain 1 gold.',
   dragon_talons: '40 damage.',
-  scorch: '50 fire damage and burn.',
-  burning_breath: '60 fire damage and burn to two adjacent cards.',
+  scorch: '50 fire damage and burn for 3 turns.',
+  burning_breath: '60 fire damage and burn for 3 turns to two adjacent cards.',
   iron_fists: '20 damage.',
   archers_of_the_keep:
     'Every monster that has damaged one of your cards this game takes 20 damage.',
@@ -205,6 +220,22 @@ const ABILITY_TEXT: Record<string, string> = {
   storm_command: 'One of your electric, water, or wind cards may use one more ability this turn. It does not spend the team action.',
   bring_the_storm: '40 electric or water damage, plus 10 for each other Stormling you control.',
   legion_spear: '20 damage. 3/6 chance of 30 damage instead.',
+  really_big_axe: 'Roll. 1–2: 40 damage. 3–4: 50 damage. 5–6: 60 damage.',
+  golden_energy: '60 damage. Then give any card 1 energy. Equipment gives that energy to the monster wearing it.',
+  monsters_and_elements:
+    'You may play a monster from your hand for free. Then deal 40 damage of every elemental type to a chosen target.',
+  shadows_rising: '10 shadow damage, three times. Each hit chooses its own target.',
+  dragged_to_the_deep: 'Choose any withdrawn monster. It advances and takes 40 damage.',
+  feed_the_beast: 'Choose one card controlled by each player. Each chosen card takes 80 damage.',
+  ice_lance: '30 ice damage.',
+  chilling_winds:
+    '30 wind and ice damage. The target\'s abilities cost an additional filled energy until your next turn.',
+  deep_freeze:
+    'Choose up to three cards. Each takes 10 ice damage. Monsters are also Frozen for 3 turns.',
+  dragonbone_spear: '30 damage. 3/6 chance of 40 damage instead.',
+  warcry:
+    'Your orcs, goblins, and trolls deal +10 damage this turn. You may let another one use an ability without spending the team action.',
+  meat_to_eat: 'This card heals 30 HP.',
   improvised_weapon: '40 damage. This card must have equipment.',
   relentless: 'This card may use one more ability this turn, without spending the team action. Until your next turn, a hit that would slay it leaves it at 10 HP.',
   attack: 'Take two more actions. Your attacks deal +10 damage this turn.',
@@ -367,10 +398,12 @@ const EQUIPMENT_TEXT: Record<string, string> = {
   strength: 'The attached card gains +10 damage to all attacks and +1 Defense.',
   efficiency: 'All the abilities on the attached card have one + replaced with a 0.',
   gnomeBomb: 'No effect.',
+  yentirStarforged:
+    'Unbreakable. When you play this card, you lose 1 point. The attached card\'s attacks deal +20 damage. They are considered to be of every elemental type.',
 }
 
 /** Ember Tortoise Chomp differs from Snapatrap Chomp. */
-export function abilityBody(defId: string, ability: AbilityDef): string {
+export function abilityBody(defId: string, ability: AbilityDef, field?: FieldMonster): string {
   if (defId === 'ember_tortoise' && ability.id === 'chomp') {
     return '10 damage. 2/6 chance of 20 damage instead.'
   }
@@ -382,6 +415,21 @@ export function abilityBody(defId: string, ability: AbilityDef): string {
   }
   if (defId === 'supply_construct' && ability.id === 'claw') {
     return '20 damage. 3/6 chance of 30 damage instead.'
+  }
+  if (defId === 'thornflower_monstrosity' && ability.id === 'growth') {
+    return 'This card heals 20 HP.'
+  }
+  if (ability.id === 'fury') {
+    const base = field?.furyDamage ?? 20
+    return `${base} fire damage. Fury's base damage increases by 10.`
+  }
+  if (ability.id === 'vicious_claws') {
+    const stacks = field?.bloodlustStacks ?? 0
+    return `${20 + stacks * 20} damage.`
+  }
+  if (ability.id === 'shadow_matter') {
+    const hits = 1 + (field?.bloodlustStacks ?? 0)
+    return `30 shadow damage ×${hits}.`
   }
   return ABILITY_TEXT[ability.id] ?? ''
 }
@@ -407,16 +455,26 @@ export function cardSummary(defId: string): string {
     const def = card.defense ? ` · ⛨ ${card.defense}` : ''
     const charge = card.darkCharge ? ' · Dark Charge' : ''
     const gold = card.goldAffinity ? ' · Gold Affinity' : ''
+    const unique = card.unique ? ' · Unique' : ''
     const families = [
       card.families?.includes('plant') ? 'Plant' : null,
       card.families?.includes('woody') ? 'Woody' : null,
       card.families?.includes('stormling') ? 'Stormling' : null,
+      card.families?.includes('pirate') ? 'Pirate' : null,
+      card.families?.includes('unending_legion') ? 'Unending Legion' : null,
+      card.families?.includes('orc') ? 'Orc' : null,
+      card.families?.includes('goblin') ? 'Goblin' : null,
+      card.families?.includes('troll') ? 'Troll' : null,
     ].filter(Boolean)
     const family = families.length > 0 ? ` · ${families.join(' · ')}` : ''
-    return `${card.points}pt · ${card.maxHp} HP${weak}${def}${family}${charge}${gold}`
+    return `${card.points}pt · ${card.maxHp} HP${weak}${def}${family}${charge}${gold}${unique}`
   }
   if (card.kind === 'equipment') {
-    return `Equipment · ${card.maxHp} HP`
+    const unique = card.unique ? ' · Unique' : ''
+    const unbreakable = card.unbreakable ? ' · Unbreakable' : ''
+    return card.unbreakable
+      ? `Equipment${unbreakable}${unique}`
+      : `Equipment · ${card.maxHp} HP${unique}`
   }
   if (card.kind === 'structure') return card.ethereal ? 'Ethereal structure' : 'Structure'
   return 'Effect'
@@ -553,14 +611,18 @@ export function withBladeCost(
   })
 }
 
-export function abilityLines(def: CardDef, extras: AbilityDef[] = []): AbilityLine[] {
+export function abilityLines(
+  def: CardDef,
+  extras: AbilityDef[] = [],
+  field?: FieldMonster,
+): AbilityLine[] {
   if (def.kind !== 'monster') return []
   return [...def.abilities, ...extras].map((a) => ({
     id: a.id,
     cost: a.cost,
     name: a.name,
     flags: abilityFlags(a),
-    body: abilityBody(def.id, a),
+    body: abilityBody(def.id, a, field),
     upgradeCost: a.upgradeCost,
     upgradeText: a.upgradeText,
   }))

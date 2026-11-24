@@ -11,6 +11,7 @@ describe('RULES.md', () => {
     expect(rules.blocks.filter((block) => block.kind === 'heading').map((block) => block.text)).toEqual([
       'Turn',
       'Opening and the first turn',
+      'Unique cards',
       'Cards and energy',
       'Target and damage',
       'Leaving play',

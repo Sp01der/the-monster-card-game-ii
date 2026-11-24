@@ -599,6 +599,29 @@ div.tcg-card:focus-visible {
   scroll-padding-inline: 1.25rem;
 }
 
+.beside-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: center;
+  min-width: 132px;
+  padding: 0.15rem 0.5rem 0.5rem;
+}
+
+.beside-label,
+.set-aside-chip {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.set-aside-chip {
+  align-self: center;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(80, 110, 150, 0.35);
+}
+
 .slot-column {
   display: flex;
   flex-direction: column;
@@ -1009,6 +1032,11 @@ div.tcg-card:focus-visible {
   font-size: 0.61rem;
   line-height: 1.25;
   text-align: left;
+}
+
+.card-special {
+  background: rgba(150, 100, 60, 0.28);
+  color: #f0d4b0;
 }
 
 button.card-passive {

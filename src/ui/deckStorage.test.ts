@@ -85,6 +85,7 @@ describe('deck storage', () => {
         name: 'Old',
         counts: { blob: 2 },
         topMonsterId: 'blob',
+        setAsideId: null,
         updatedAt: 1,
       },
     ])

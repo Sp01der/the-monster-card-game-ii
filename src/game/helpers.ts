@@ -15,7 +15,7 @@ import type {
   StatusInstance,
   TargetRef,
 } from './types'
-import { FIELD_SIZE } from './types'
+import { BESIDE_SLOT, FIELD_SIZE } from './types'
 
 export function otherPlayer(id: PlayerId): PlayerId {
   return id === 0 ? 1 : 0
@@ -141,8 +141,31 @@ export function opponent(state: GameState): PlayerState {
 }
 
 export function monsterAt(player: PlayerState, slot: number): FieldMonster | null {
+  if (slot === BESIDE_SLOT) return player.beside ?? null
   if (slot < 0 || slot >= player.field.length) return null
   return player.field[slot]
+}
+
+export function setMonsterAt(
+  player: PlayerState,
+  slot: number,
+  monster: FieldMonster | null,
+): void {
+  if (slot === BESIDE_SLOT) {
+    player.beside = monster
+    return
+  }
+  player.field[slot] = monster
+}
+
+/** Slots that currently hold a monster, including the beside zone. */
+export function occupiedSlots(player: PlayerState): number[] {
+  const slots: number[] = []
+  for (let i = 0; i < player.field.length; i++) {
+    if (player.field[i]) slots.push(i)
+  }
+  if (player.beside) slots.push(BESIDE_SLOT)
+  return slots
 }
 
 export function resolveTarget(
@@ -247,9 +270,11 @@ export function hasKeystone(monster: FieldMonster): boolean {
   return monster.equipment.some((equipment) => equipment.defId === 'colossus_keystone')
 }
 
-/** A Colossus with no Keystone cannot gain energy from any source. */
+/** A Colossus with no Keystone cannot gain energy from any source. Paralyzing Fear blocks all energy. */
 export function canReceiveEnergy(monster: FieldMonster): boolean {
+  if (monster.paralyzedBy !== undefined) return false
   if (isStone(monster)) return false
+  if (getMonster(identityDefId(monster)).goldOnly) return false
   return identityDefId(monster) !== 'colossus' || hasKeystone(monster)
 }
 
@@ -270,20 +295,82 @@ export function countEtherealCards(state: GameState): number {
   return count
 }
 
-/** A monster on the field or Ethereal still counts as in the match. */
+/** A monster on the field, beside the row, or Ethereal still counts as in the match. */
 export function hasMonsterInMatch(player: PlayerState): boolean {
+  if (player.beside) return true
   if (player.field.some((monster) => monster !== null)) return true
   return (player.ethereal ?? []).some((entry) => entry.monster || entry.attachedMonster)
+}
+
+export function isThornflower(defId: string): boolean {
+  return defId === 'thornflower_monstrosity'
+}
+
+export function isUnendingLegion(defId: string): boolean {
+  const card = getCard(defId)
+  return card.kind === 'monster' && card.families?.includes('unending_legion') === true
+}
+
+export function isPirateCard(
+  state: GameState,
+  monster: FieldMonster,
+  equipmentDefId?: string,
+): boolean {
+  if (equipmentDefId) {
+    if (state.pirateTags?.includes(equipmentDefId)) return true
+    return false
+  }
+  if (monster.pirate) return true
+  if (state.pirateTags?.includes(monster.instanceId)) return true
+  const def = getMonster(identityDefId(monster))
+  return def.families?.includes('pirate') === true
+}
+
+export function controlsRelkar(player: PlayerState): boolean {
+  if (player.beside && identityDefId(player.beside) === 'relkar_goldflame') return true
+  return player.field.some((monster) => monster && identityDefId(monster) === 'relkar_goldflame')
 }
 
 export function grantEnergy(state: GameState, monster: FieldMonster, amount: number): number {
   if (amount <= 0) return 0
   if (!canReceiveEnergy(monster)) {
-    log(state, `${getMonster(monster.defId).name} cannot gain energy without a Colossus Keystone.`)
+    const def = getMonster(monster.defId)
+    if (monster.paralyzedBy !== undefined) {
+      log(state, `${def.name} cannot gain energy while Paralyzing Fear holds.`)
+      return 0
+    }
+    if (def.goldOnly) {
+      log(state, `${def.name} may only use gold as energy.`)
+      return 0
+    }
+    log(state, `${def.name} cannot gain energy without a Colossus Keystone.`)
     return 0
   }
   monster.energy += amount
+  if (isThornflower(monster.defId)) {
+    shareThornflowerEnergy(state, monster, amount)
+  }
   return amount
+}
+
+/** Other Thornflowers gain the same amount once. Does not chain. */
+function shareThornflowerEnergy(
+  state: GameState,
+  source: FieldMonster,
+  amount: number,
+): void {
+  for (const player of state.players) {
+    const onSource = player.field.some((m) => m?.instanceId === source.instanceId)
+      || player.beside?.instanceId === source.instanceId
+    if (!onSource) continue
+    for (const other of player.field) {
+      if (!other || other.instanceId === source.instanceId || !isThornflower(other.defId)) continue
+      if (!canReceiveEnergy(other)) continue
+      other.energy += amount
+      log(state, `${getMonster(other.defId).name} gains ${amount} energy from Monstrous Growth.`)
+    }
+    break
+  }
 }
 
 export function isDamageProtected(state: GameState, monster: FieldMonster): boolean {
@@ -349,6 +436,10 @@ export function beginProtection(
   return true
 }
 
+/** Default duration when an ability says burn / poison with no turn count. */
+export const DEFAULT_BURN_TURNS = 2
+export const DEFAULT_POISON_TURNS = 2
+
 export function applyStatus(
   monster: FieldMonster,
   kind: StatusInstance['kind'],
@@ -397,12 +488,17 @@ export type GoldPayment = { goldRequire: number; goldSpend: number }
 /** Ways to cover a cost when Gold counts as energy. An empty 0 keeps Gold; a filled + removes one. */
 export function goldPayments(monster: FieldMonster, require: number, spend: number): GoldPayment[] {
   const gold = goldCount(monster)
+  const goldOnly = getMonster(identityDefId(monster)).goldOnly === true
   const payments: GoldPayment[] = []
   for (let goldSpend = 0; goldSpend <= Math.min(gold, spend); goldSpend++) {
     const goldLeft = gold - goldSpend
     for (let goldRequire = 0; goldRequire <= Math.min(goldLeft, require); goldRequire++) {
       const energyNeed = require - goldRequire + (spend - goldSpend)
-      if (monster.energy >= energyNeed) payments.push({ goldRequire, goldSpend })
+      if (goldOnly) {
+        if (energyNeed === 0) payments.push({ goldRequire, goldSpend })
+      } else if (monster.energy >= energyNeed) {
+        payments.push({ goldRequire, goldSpend })
+      }
     }
   }
   return payments
@@ -421,6 +517,9 @@ function findMonster(state: GameState, instanceId: string): { player: PlayerStat
     for (let slot = 0; slot < player.field.length; slot++) {
       const monster = player.field[slot]
       if (monster?.instanceId === instanceId) return { player, slot, monster }
+    }
+    if (player.beside?.instanceId === instanceId) {
+      return { player, slot: BESIDE_SLOT, monster: player.beside }
     }
   }
   return null
@@ -590,14 +689,16 @@ export function discardMonster(
   slot: number,
   mode: 'slain' | 'removed',
   slainBy?: PlayerId,
+  options?: { skipPointLoss?: boolean },
 ): void {
-  const monster = player.field[slot]
+  const monster = monsterAt(player, slot)
   if (!monster) return
   const def = getMonster(monster.defId)
+  const points = monster.pointsOverride ?? def.points
 
   if (monster.protectingInstanceId) releaseProtection(state, monster)
   for (const owner of state.players) {
-    for (const other of owner.field) {
+    for (const other of [...owner.field, owner.beside ?? null]) {
       if (!other) continue
       if (other.protectingInstanceId === monster.instanceId) other.protectingInstanceId = undefined
       if (other.protectedByInstanceId === monster.instanceId) other.protectedByInstanceId = undefined
@@ -606,14 +707,23 @@ export function discardMonster(
 
   for (const eq of monster.equipment) retireEquipment(player, eq)
 
+  // Persist Unique stacks on this instance.
+  if (monster.furyDamage !== undefined || monster.bloodlustStacks !== undefined) {
+    state.cardMemory = state.cardMemory ?? {}
+    state.cardMemory[monster.instanceId] = {
+      furyDamage: monster.furyDamage,
+      bloodlustStacks: monster.bloodlustStacks,
+    }
+  }
+
   player.discard.push({ instanceId: monster.instanceId, defId: monster.defId })
   const held = monster.held
   monster.held = undefined
-  player.field[slot] = null
+  setMonsterAt(player, slot, null)
 
   // Any Cling maintained by or attached to this monster ends.
   for (const p of state.players) {
-    for (const m of p.field) {
+    for (const m of [...p.field, p.beside ?? null]) {
       if (!m) continue
       m.statuses = m.statuses.filter(
         (s) => s.kind !== 'cling' || s.sourceInstanceId !== monster.instanceId,
@@ -625,11 +735,15 @@ export function discardMonster(
   }
 
   if (mode === 'slain') {
-    player.points -= def.points
-    log(
-      state,
-      `${player.name}'s ${def.name} was slain (−${def.points} point${def.points === 1 ? '' : 's'}). Points: ${player.points}`,
-    )
+    if (!options?.skipPointLoss) {
+      player.points -= points
+      log(
+        state,
+        `${player.name}'s ${def.name} was slain (−${points} point${points === 1 ? '' : 's'}). Points: ${player.points}`,
+      )
+    } else {
+      log(state, `${player.name}'s ${def.name} was slain. Bloodlust: no points lost.`)
+    }
     if (
       monster.speakerArmed &&
       monster.stance === 'active' &&
@@ -796,7 +910,7 @@ export function checkLosses(state: GameState): void {
 
   if (isTwoPlayer(state)) {
     for (const player of state.players) {
-      if (player.points <= 0) {
+      if (player.points <= 0 && !controlsRelkar(player)) {
         state.winner = otherPlayer(player.id)
         log(state, `${player.name} has no points. ${getPlayer(state, state.winner).name} wins!`)
         return
@@ -806,7 +920,7 @@ export function checkLosses(state: GameState): void {
     for (const player of state.players) {
       if (shouldDeferFieldLoss(state, player)) continue
       if (!player.hasFinishedFirstTurn) continue
-      if (!hasMonsterInMatch(player)) {
+      if (!hasMonsterInMatch(player) && !controlsRelkar(player)) {
         state.winner = otherPlayer(player.id)
         log(
           state,
@@ -820,14 +934,14 @@ export function checkLosses(state: GameState): void {
 
   for (const player of state.players) {
     if (player.eliminated) continue
-    if (playerLosesOnPoints(player)) {
+    if (playerLosesOnPoints(player) && !controlsRelkar(player)) {
       eliminatePlayer(state, player, 'no points')
     }
   }
 
   for (const player of state.players) {
     if (player.eliminated) continue
-    if (playerLosesOnField(state, player)) {
+    if (playerLosesOnField(state, player) && !controlsRelkar(player)) {
       eliminatePlayer(state, player, 'no monsters in play')
     }
   }
@@ -867,6 +981,7 @@ function remapPending(pending: PendingInteraction, playerId: PlayerId, removed: 
     case 'plasmaCannon':
     case 'soundWave':
     case 'freezeTargets':
+    case 'deepFreeze':
     case 'stormType':
     case 'chargedSplat':
       pending.sourceSlot = shiftSource(pending.sourcePlayer, pending.sourceSlot)

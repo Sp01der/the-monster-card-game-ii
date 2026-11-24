@@ -10,6 +10,8 @@ export type DeckSetup = {
   cardIds: string[]
   /** Index into cardIds for the monster placed on top before shuffle. */
   topMonsterIndex: number
+  /** Index into cardIds for a Unique monster set aside before the game. */
+  setAsideIndex?: number
 }
 
 function shuffle<T>(arr: T[], rng: () => number): T[] {
@@ -41,21 +43,50 @@ function buildPlayer(
   state: GameState,
   shuffleFn: <T>(arr: T[]) => T[],
 ): PlayerState {
-  if (setup.cardIds.length < STARTING_HAND) {
-    throw new Error(`${setup.name} needs at least ${STARTING_HAND} cards`)
+  const setAsideCount =
+    setup.setAsideIndex !== undefined && setup.setAsideIndex !== setup.topMonsterIndex ? 1 : 0
+  if (setup.cardIds.length - setAsideCount < STARTING_HAND) {
+    throw new Error(`${setup.name} needs at least ${STARTING_HAND} cards after the set-aside`)
   }
   const topId = setup.cardIds[setup.topMonsterIndex]
   if (!topId || getCard(topId).kind !== 'monster') {
     throw new Error(`${setup.name} must select a monster to put on top`)
   }
+  const topCard = getCard(topId)
+  if (topCard.kind === 'monster' && topCard.unique) {
+    throw new Error(`${setup.name} cannot put a Unique monster on top`)
+  }
 
-  const restIds = setup.cardIds.filter((_, i) => i !== setup.topMonsterIndex)
+  const setAsideIndex =
+    setup.setAsideIndex !== undefined && setup.setAsideIndex !== setup.topMonsterIndex
+      ? setup.setAsideIndex
+      : undefined
+  if (setAsideIndex !== undefined) {
+    const asideId = setup.cardIds[setAsideIndex]
+    if (!asideId) throw new Error(`${setup.name} has an invalid set-aside`)
+    const aside = getCard(asideId)
+    if (aside.kind !== 'monster' || !aside.unique) {
+      throw new Error(`${setup.name} set-aside must be a Unique monster`)
+    }
+  }
+
+  const restIds = setup.cardIds.filter(
+    (_, i) => i !== setup.topMonsterIndex && i !== setAsideIndex,
+  )
   const shuffledRest = shuffleFn(restIds)
   const ordered = [topId, ...shuffledRest]
+
+  if (ordered.length < STARTING_HAND) {
+    throw new Error(`${setup.name} needs at least ${STARTING_HAND} cards after the set-aside`)
+  }
 
   const cards: HandCard[] = ordered.map((defId) => makeCard(state, defId))
   const hand = cards.slice(0, STARTING_HAND)
   const deck = cards.slice(STARTING_HAND)
+  const setAside =
+    setAsideIndex !== undefined
+      ? makeCard(state, setup.cardIds[setAsideIndex]!)
+      : null
 
   return {
     id,
@@ -66,6 +97,8 @@ function buildPlayer(
     discard: [],
     removed: [],
     field: Array.from({ length: FIELD_SIZE }, () => null),
+    beside: null,
+    setAside,
     hasFinishedFirstTurn: false,
     isFirstTurn: true,
     skipEnergyPhases: 0,

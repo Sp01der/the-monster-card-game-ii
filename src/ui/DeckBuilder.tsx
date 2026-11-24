@@ -42,6 +42,7 @@ type Draft = {
   name: string
   counts: Record<string, number>
   topMonsterId: string | null
+  setAsideId: string | null
   deckName: string
   source: DeckSource
 }
@@ -82,6 +83,12 @@ const TYPE_FILTERS: { id: CardSearchType; label: string; group: 'Damage' | 'Fami
   { id: 'dark_charge', label: 'Dark Charge', group: 'Trait' },
   { id: 'gold_affinity', label: 'Gold Affinity', group: 'Trait' },
   { id: 'enchantment', label: 'Enchantment', group: 'Trait' },
+  { id: 'unique', label: 'Unique', group: 'Trait' },
+  { id: 'pirate', label: 'Pirate', group: 'Family' },
+  { id: 'unending_legion', label: 'Unending Legion', group: 'Family' },
+  { id: 'orc', label: 'Orc', group: 'Family' },
+  { id: 'goblin', label: 'Goblin', group: 'Family' },
+  { id: 'troll', label: 'Troll', group: 'Family' },
 ]
 
 function draftToSetup(draft: Draft): DeckSetup {
@@ -91,10 +98,13 @@ function draftToSetup(draft: Draft): DeckSetup {
     for (let i = 0; i < n; i++) cardIds.push(id)
   }
   const topMonsterIndex = cardIds.findIndex((id) => id === draft.topMonsterId)
+  const setAsideIndex =
+    draft.setAsideId != null ? cardIds.findIndex((id) => id === draft.setAsideId) : -1
   return {
     name: draft.name.trim() || 'Player',
     cardIds,
     topMonsterIndex: topMonsterIndex >= 0 ? topMonsterIndex : 0,
+    ...(setAsideIndex >= 0 ? { setAsideIndex } : {}),
   }
 }
 
@@ -111,21 +121,33 @@ function compareCards(a: string, b: string): number {
 }
 
 function firstMonster(counts: Record<string, number>): string | null {
-  return Object.keys(counts).find((id) => getCard(id).kind === 'monster') ?? null
+  return (
+    Object.keys(counts).find((id) => {
+      const card = getCard(id)
+      return card.kind === 'monster' && !card.unique
+    }) ?? null
+  )
 }
 
 function withCount(draft: Draft, id: string, nextCount: number): Draft {
+  const card = getCard(id)
+  const unique =
+    (card.kind === 'monster' || card.kind === 'equipment') && card.unique === true
+  const capped = unique ? Math.min(1, nextCount) : nextCount
   const counts = { ...draft.counts }
-  if (nextCount <= 0) delete counts[id]
-  else counts[id] = nextCount
+  if (capped <= 0) delete counts[id]
+  else counts[id] = capped
 
   let topMonsterId = draft.topMonsterId
-  if (getCard(id).kind === 'monster') {
-    if (nextCount <= 0 && topMonsterId === id) topMonsterId = firstMonster(counts)
-    else if (!topMonsterId && nextCount > 0) topMonsterId = id
+  let setAsideId = draft.setAsideId
+  if (card.kind === 'monster') {
+    if (capped <= 0 && topMonsterId === id) topMonsterId = firstMonster(counts)
+    else if (!topMonsterId && capped > 0 && !card.unique) topMonsterId = id
+    if (capped <= 0 && setAsideId === id) setAsideId = null
+    if (topMonsterId && card.unique && topMonsterId === id) topMonsterId = firstMonster(counts)
   }
 
-  return { ...draft, counts, topMonsterId }
+  return { ...draft, counts, topMonsterId, setAsideId }
 }
 
 function fromStarter(starter: StarterDeck, playerName: string): Draft {
@@ -133,6 +155,7 @@ function fromStarter(starter: StarterDeck, playerName: string): Draft {
     name: playerName,
     counts: { ...starter.counts },
     topMonsterId: starter.topMonsterId,
+    setAsideId: null,
     deckName: starter.name,
     source: { kind: 'starter', id: starter.id },
   }
@@ -143,6 +166,7 @@ function fromSaved(deck: StoredDeck, playerName: string): Draft {
     name: playerName,
     counts: { ...deck.counts },
     topMonsterId: deck.topMonsterId,
+    setAsideId: deck.setAsideId ?? null,
     deckName: deck.name,
     source: { kind: 'saved', id: deck.id },
   }
@@ -223,8 +247,27 @@ export function DeckBuilder({ onStart }: Props) {
       if (!current.topMonsterId || (current.counts[current.topMonsterId] ?? 0) < 1) {
         return `${label} must choose a monster to put on top.`
       }
-      if (getCard(current.topMonsterId).kind !== 'monster') {
+      const top = getCard(current.topMonsterId)
+      if (top.kind !== 'monster') {
         return `${label} must choose a monster to put on top.`
+      }
+      if (top.unique) {
+        return `${label} cannot put a Unique monster on top.`
+      }
+      if (current.setAsideId) {
+        const aside = getCard(current.setAsideId)
+        if (
+          aside.kind !== 'monster' ||
+          !aside.unique ||
+          (current.counts[current.setAsideId] ?? 0) < 1
+        ) {
+          return `${label} has an invalid Unique set aside.`
+        }
+        const remaining =
+          totalCards(current) - (current.setAsideId ? 1 : 0)
+        if (remaining < STARTING_HAND) {
+          return `${label} needs at least ${STARTING_HAND} cards after the set-aside.`
+        }
       }
     }
     if (!isTwoSeat) {
@@ -293,12 +336,14 @@ export function DeckBuilder({ onStart }: Props) {
       name: draft.deckName,
       counts: draft.counts,
       topMonsterId: draft.topMonsterId,
+      setAsideId: draft.setAsideId,
     })
     updateDraft((current) => ({
       ...current,
       deckName: saved.name,
       counts: { ...saved.counts },
       topMonsterId: saved.topMonsterId,
+      setAsideId: saved.setAsideId,
       source: { kind: 'saved', id: saved.id },
     }))
     remember(player, { kind: 'saved', id: saved.id })
@@ -325,6 +370,7 @@ export function DeckBuilder({ onStart }: Props) {
       ...current,
       counts: {},
       topMonsterId: null,
+      setAsideId: null,
       source: null,
       deckName: '',
     }))
@@ -339,6 +385,7 @@ export function DeckBuilder({ onStart }: Props) {
         ...prev[other]!,
         counts: { ...draft.counts },
         topMonsterId: draft.topMonsterId,
+        setAsideId: draft.setAsideId,
         deckName: draft.deckName,
         source: null,
       }
@@ -714,13 +761,26 @@ export function DeckBuilder({ onStart }: Props) {
                       <span className="deck-card-name">{card.name}</span>
                       <span className="muted deck-card-kind">{card.kind}</span>
                     </div>
-                    {card.kind === 'monster' ? (
+                    {card.kind === 'monster' && !(card.unique) ? (
                       <button
                         type="button"
                         className={onTop ? 'chip selected' : 'chip'}
                         onClick={() => updateDraft((current) => ({ ...current, topMonsterId: id }))}
                       >
                         {onTop ? 'On top' : 'Set on top'}
+                      </button>
+                    ) : card.kind === 'monster' && card.unique ? (
+                      <button
+                        type="button"
+                        className={draft.setAsideId === id ? 'chip selected' : 'chip'}
+                        onClick={() =>
+                          updateDraft((current) => ({
+                            ...current,
+                            setAsideId: current.setAsideId === id ? null : id,
+                          }))
+                        }
+                      >
+                        {draft.setAsideId === id ? 'Set aside ✓' : 'Set aside'}
                       </button>
                     ) : (
                       <span />

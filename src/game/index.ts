@@ -16,6 +16,8 @@ export {
   countPoisonCardsInPlay,
   hasDarkCharge,
   hasGoldAffinity,
+  isPlunderer,
+  controlsGorruk,
   canUseDarkCharge,
   formatDamageType,
   cardMatchesSearchType,
@@ -37,11 +39,13 @@ export {
   getCircleAdjacent,
 } from './damage'
 export { applyAction } from './reducer'
+export { monsterAt } from './helpers'
 export { createGame, sampleDeck, shuffleWith } from './setup'
 export type { CreateGameOptions, DeckSetup } from './setup'
 export type { CardSearchType } from './catalog'
 export type * from './types'
 export {
+  BESIDE_SLOT,
   FIELD_SIZE,
   HAND_SIZE_LIMIT,
   MAX_PLAYERS,

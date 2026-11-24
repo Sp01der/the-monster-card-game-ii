@@ -346,7 +346,7 @@ describe('plant cards', () => {
     put(hit.players[1], 0, 'blob', { hp: 50 })
     const burned = use(hit, 'burning_spear')
     expect(burned.players[1].field[0]?.hp).toBe(20)
-    expect(burned.players[1].field[0]?.statuses.some((status) => status.kind === 'burn' && status.turns === 3)).toBe(true)
+    expect(burned.players[1].field[0]?.statuses.some((status) => status.kind === 'burn' && status.turns === 2)).toBe(true)
     expect(burned.players[0].field[0]?.hp).toBe(70)
 
     const miss = main(game(() => 6))

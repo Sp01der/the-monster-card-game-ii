@@ -5,6 +5,7 @@ import type {
   CardDef,
   DamageType,
   FieldMonster,
+  GameState,
   PlayerState,
   SummonElement,
 } from './types'
@@ -255,6 +256,7 @@ export const CATALOG: Record<string, CardDef> = {
   },
   goblin_magician: {
     kind: 'monster', id: 'goblin_magician', name: 'Goblin Magician', points: 2, maxHp: 80,
+    families: ['goblin'],
     weakness: 'poison',
     abilities: [
       { id: 'magic_missile', name: 'Magic Missile', cost: parseCost('00'), ranged: true,
@@ -269,7 +271,7 @@ export const CATALOG: Record<string, CardDef> = {
       { id: 'swoop_scratch', name: "Swoop 'n' Scratch", cost: parseCost('0+'),
         effects: [{ type: 'rollDamage', table: { 1: 0, 2: 0, 3: 30, 4: 30, 5: 50, 6: 50 }, damageType: 'poison' }] },
       { id: 'tail_sting', name: 'Tail Sting', cost: parseCost('000'),
-        effects: [{ type: 'damage', amount: 20, damageType: 'poison' }, { type: 'status', status: 'poison', turns: 3 }] },
+        effects: [{ type: 'damage', amount: 20, damageType: 'poison' }, { type: 'status', status: 'poison', turns: 2 }] },
     ],
   },
   big_blob: {
@@ -360,13 +362,14 @@ export const CATALOG: Record<string, CardDef> = {
   },
   orc: {
     kind: 'monster', id: 'orc', name: 'Orc', points: 2, maxHp: 80, defense: 1,
+    families: ['orc'],
     abilities: [
       { id: 'cruel_scimitar', name: 'Cruel Scimitar', cost: parseCost('0+'),
         effects: [{ type: 'chanceBoostDamage', base: 0, boosted: 40, successFaces: highFaces(5) }] },
       { id: 'poisoned_shaft', name: 'Poisoned Shaft', cost: parseCost('0+'), ranged: true,
         effects: [
           { type: 'damage', amount: 10, damageType: 'poison' },
-          { type: 'status', status: 'poison', turns: 3 },
+          { type: 'status', status: 'poison', turns: 2 },
         ] },
       { id: 'blood_thirsty', name: 'Blood Thirsty', cost: parseCost('+'), free: true,
         effects: [{ type: 'damage', amount: 10 }] },
@@ -383,7 +386,7 @@ export const CATALOG: Record<string, CardDef> = {
   },
   drowned_pirate: {
     kind: 'monster', id: 'drowned_pirate', name: 'Drowned Pirate', points: 2, maxHp: 80,
-    weakness: 'light', goldAffinity: true,
+    weakness: 'light', goldAffinity: true, families: ['pirate'],
     abilities: [
       { id: 'rusty_cutlass', name: 'Rusty Cutlass', cost: parseCost('+'),
         effects: [{ type: 'chanceBoostDamage', base: 0, boosted: 30, successFaces: highFaces(4) }] },
@@ -538,7 +541,7 @@ export const CATALOG: Record<string, CardDef> = {
       { id: 'fire_sword', name: 'Fire Sword', cost: parseCost('0+'),
         effects: [
           { type: 'damage', amount: 40, damageType: 'fire' },
-          { type: 'status', status: 'burn', turns: 3 },
+          { type: 'status', status: 'burn', turns: 2 },
         ] },
       { id: 'flurry_of_blows', name: 'Flurry of Blows', cost: parseCost('0'),
         special: 'flurryOfBlows', effects: [] },
@@ -575,7 +578,7 @@ export const CATALOG: Record<string, CardDef> = {
       { id: 'cyclops_laser', name: "Cyclops' Laser", cost: parseCost('0++'),
         effects: [
           { type: 'chanceBoostDamage', base: 30, boosted: 40, successFaces: highFaces(3), damageType: 'light' },
-          { type: 'status', status: 'burn', turns: 3 },
+          { type: 'status', status: 'burn', turns: 2 },
         ] },
       { id: 'eye_flash', name: 'Eye Flash', cost: parseCost('000'), special: 'eyeFlash',
         effects: [] },
@@ -588,7 +591,7 @@ export const CATALOG: Record<string, CardDef> = {
       { id: 'burning_buck', name: 'Burning Buck', cost: parseCost('+'),
         effects: [
           { type: 'damage', amount: 30, damageType: 'fire' },
-          { type: 'status', status: 'burn', turns: 3 },
+          { type: 'status', status: 'burn', turns: 2 },
         ] },
       { id: 'stampede', name: 'Stampede', cost: parseCost('++'), special: 'stampede',
         effects: [] },
@@ -631,7 +634,7 @@ export const CATALOG: Record<string, CardDef> = {
   },
   loot_goblin: {
     kind: 'monster', id: 'loot_goblin', name: 'Loot Goblin', points: 2, maxHp: 90,
-    weakness: 'poison', goldAffinity: true,
+    weakness: 'poison', goldAffinity: true, families: ['goblin'],
     passiveText: 'When this card deals damage, it deals +10 for each Gold or Equipment attached to it.',
     abilities: [
       { id: 'goblin_scratch', name: 'Scratch', cost: parseCost('0'),
@@ -753,7 +756,7 @@ export const CATALOG: Record<string, CardDef> = {
       { id: 'poisoned_spear', name: 'Poisoned Spear', cost: parseCost('+'),
         effects: [
           { type: 'damage', amount: 20, damageType: 'poison' },
-          { type: 'status', status: 'poison', turns: 3 },
+          { type: 'status', status: 'poison', turns: 2 },
         ] },
       { id: 'burning_spear', name: 'Burning Spear', cost: parseCost('+'), special: 'burningSpear', effects: [] },
       { id: 'ambush', name: 'Ambush', cost: parseCost('++'),
@@ -786,7 +789,7 @@ export const CATALOG: Record<string, CardDef> = {
   },
   unending_legionary: {
     kind: 'monster', id: 'unending_legionary', name: 'Unending Legionary', points: 2, maxHp: 80,
-    weakness: 'electric',
+    weakness: 'electric', families: ['unending_legion'],
     abilities: [
       { id: 'legion_spear', name: 'Spear', cost: parseCost('0'),
         effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: highFaces(3) }] },
@@ -797,7 +800,7 @@ export const CATALOG: Record<string, CardDef> = {
   },
   unending_bannerman: {
     kind: 'monster', id: 'unending_bannerman', name: 'Bannerman of the Unending Legion', points: 2, maxHp: 80,
-    weakness: 'electric',
+    weakness: 'electric', families: ['unending_legion'],
     passiveText: 'During your energy phase, you may give 1 energy to a monster you control worth 2 points or less.',
     abilities: [
       { id: 'legion_spear', name: 'Spear', cost: parseCost('0'),
@@ -1085,7 +1088,7 @@ export const CATALOG: Record<string, CardDef> = {
   },
   hill_troll: {
     kind: 'monster', id: 'hill_troll', name: 'Hill Troll', points: 4, maxHp: 160,
-    weakness: 'light', extremeWeakness: true, defense: 1,
+    weakness: 'light', extremeWeakness: true, defense: 1, families: ['troll'],
     abilities: [
       { id: 'troll_bash', name: 'Bash', cost: parseCost('0'),
         effects: [{ type: 'damage', amount: 30 }] },
@@ -1217,7 +1220,7 @@ export const CATALOG: Record<string, CardDef> = {
   },
   corsair_of_wildersel: {
     kind: 'monster', id: 'corsair_of_wildersel', name: 'Corsair of Wildersel', points: 2, maxHp: 80,
-    goldAffinity: true,
+    goldAffinity: true, families: ['pirate'],
     abilities: [
       { id: 'raid', name: 'Raid', cost: parseCost('+'), special: 'raid', effects: [] },
       { id: 'treblae_shot', name: 'Treblae Shot', cost: parseCost('0000'),
@@ -1390,7 +1393,7 @@ export const CATALOG: Record<string, CardDef> = {
   },
   unending_archer: {
     kind: 'monster', id: 'unending_archer', name: 'Unending Archer', points: 2, maxHp: 80,
-    weakness: 'earth',
+    weakness: 'earth', families: ['unending_legion'],
     abilities: [
       { id: 'archer_spear', name: 'Spear', cost: parseCost('0'),
         effects: [{ type: 'chanceBoostDamage', base: 20, boosted: 30, successFaces: highFaces(3) }] },
@@ -1607,7 +1610,7 @@ export const CATALOG: Record<string, CardDef> = {
   },
   hollow_rogue: {
     kind: 'monster', id: 'hollow_rogue', name: 'Hollow Rogue', points: 2, maxHp: 70,
-    weakness: 'light', goldAffinity: true, darkCharge: true,
+    weakness: 'light', goldAffinity: true, darkCharge: true, families: ['pirate'],
     passiveText: 'This card does double damage on the turn you play it.',
     abilities: [
       { id: 'twisted_knife', name: 'Twisted Knife', cost: parseCost('0'),
@@ -1615,6 +1618,140 @@ export const CATALOG: Record<string, CardDef> = {
       { id: 'black_bolt', name: 'Black Bolt', cost: parseCost('0+'),
         effects: [{ type: 'damage', amount: 30, damageType: 'shadow' }] },
       { id: 'vanish', name: 'Vanish', cost: parseCost('+++'), special: 'vanish', effects: [] },
+    ],
+  },
+  kings_of_the_ocean: {
+    kind: 'monster', id: 'kings_of_the_ocean', name: 'The Kings of the Ocean', points: 6, maxHp: 300,
+    unique: true, besideRow: true, goldAffinity: true, goldOnly: true, families: ['pirate'],
+    specialText:
+      'Tribute to the Ocean — The Kings may only use gold as energy. A card that gives them gold cannot be harmed by the Kings of the Ocean until the end of the Kings player\'s next turn. Opponents may give them gold.',
+    abilities: [
+      { id: 'hurricane', name: 'Hurricane', cost: parseCost('++'),
+        effects: [{ type: 'damage', amount: 50, damageType: 'wind' }] },
+      { id: 'hail_to_the_kings', name: 'Hail To The Kings!', cost: parseCost('0+'),
+        special: 'hailToTheKings', effects: [] },
+      { id: 'pirates_haven', name: "Pirate's Haven", cost: parseCost('000'),
+        special: 'piratesHaven', effects: [] },
+      { id: 'wrath_of_storms', name: 'The Wrath of Storms', cost: parseCost('+++++'),
+        special: 'wrathOfStorms', effects: [] },
+    ],
+  },
+  lord_kalung_firefist: {
+    kind: 'monster', id: 'lord_kalung_firefist', name: 'Lord Kalung Firefist', points: 5, maxHp: 190,
+    unique: true,
+    abilities: [
+      { id: 'flaming_fists', name: 'Flaming Fists', cost: parseCost('0+'),
+        effects: [
+          { type: 'damage', amount: 40, damageType: 'fire' },
+          { type: 'status', status: 'burn', turns: 2 },
+        ] },
+      { id: 'kalung_fireball', name: 'Fireball', cost: parseCost('00'), ranged: true,
+        special: 'fireball', effects: [] },
+      { id: 'incineration', name: 'Incineration', cost: parseCost('++++'),
+        special: 'incineration', effects: [] },
+    ],
+  },
+  relkar_goldflame: {
+    kind: 'monster', id: 'relkar_goldflame', name: 'Relkar Goldflame', points: 6, maxHp: 240,
+    unique: true, families: ['unending_legion'],
+    specialText: 'Unending — You cannot lose the game while this card is in play.',
+    abilities: [
+      { id: 'fury', name: 'Fury', cost: parseCost('+'),
+        special: 'fury', effects: [] },
+      { id: 'legion_grows', name: 'The Legion Grows', cost: parseCost('0'),
+        special: 'legionGrows', effects: [] },
+      { id: 'legion_marches', name: 'The Legion Marches On', cost: parseCost('0++'), free: true,
+        special: 'legionMarches', effects: [] },
+    ],
+  },
+  lord_devadian: {
+    kind: 'monster', id: 'lord_devadian', name: 'Lord Devadian', points: 6, maxHp: 200,
+    unique: true,
+    specialText:
+      'Bloodlust — When Devadian kills any monster, you may choose to make its owner lose no points, instead giving this card +40 max HP, +40 HP, +20 damage to Vicious Claws, 1 energy, and Shadow Matter fires an additional time when used.',
+    abilities: [
+      { id: 'vicious_claws', name: 'Vicious Claws', cost: parseCost('0'),
+        special: 'viciousClaws', effects: [] },
+      { id: 'feed', name: 'Feed', cost: parseCost('0+'),
+        special: 'feed', effects: [] },
+      { id: 'shadow_matter', name: 'Shadow Matter', cost: parseCost('0+'),
+        special: 'shadowMatter', repeats: 1, effects: [] },
+      { id: 'wings_of_night', name: 'Wings of Night', cost: parseCost('+++'), free: true,
+        special: 'wingsOfNight', effects: [] },
+    ],
+  },
+  yentir_starforged: {
+    kind: 'equipment', id: 'yentir_starforged', name: 'Yentir Starforged', maxHp: 0,
+    equipmentId: 'yentirStarforged', unique: true, unbreakable: true, indestructible: true,
+    specialText:
+      'Unbreakable. When you play this card, you lose 1 point. The attached card\'s attacks deal +20 damage. They are considered to be of every elemental type.',
+  },
+  harry_the_hero: {
+    kind: 'monster', id: 'harry_the_hero', name: 'Harry the Hero', points: 4, maxHp: 120,
+    unique: true,
+    abilities: [
+      { id: 'really_big_axe', name: 'Really BIG Axe', cost: parseCost('0+'),
+        effects: [{ type: 'rollDamage', table: { 1: 40, 2: 40, 3: 50, 4: 50, 5: 60, 6: 60 } }] },
+      { id: 'golden_energy', name: 'Golden Energy', cost: parseCost('000'),
+        special: 'goldenEnergy', effects: [] },
+      { id: 'monsters_and_elements', name: 'Monsters & Elements', cost: parseCost('00'),
+        special: 'monstersAndElements', effects: [] },
+    ],
+  },
+  horror_of_the_deep: {
+    kind: 'monster', id: 'horror_of_the_deep', name: 'The Horror of the Deep', points: 6, maxHp: 300,
+    unique: true,
+    specialText:
+      'Paralyzing Fear — Any monster that takes damage from the Horror rolls. On a 5 or 6, nothing else happens. On a 3 or 4, it withdraws. On a 1 or 2, it withdraws and cannot use abilities or gain energy until the start of your next turn. A monster slain by the hit does not roll.',
+    abilities: [
+      { id: 'shadows_rising', name: 'Shadows Rising', cost: parseCost('0'),
+        special: 'shadowsRising', effects: [] },
+      { id: 'dragged_to_the_deep', name: 'Dragged to the Deep', cost: parseCost('0+'),
+        special: 'draggedToTheDeep', effects: [] },
+      { id: 'feed_the_beast', name: 'Feed the Beast', cost: parseCost('00+'),
+        special: 'feedTheBeast', effects: [] },
+    ],
+  },
+  tenilius_icilius: {
+    kind: 'monster', id: 'tenilius_icilius', name: 'Tenilius Icilius', points: 2, maxHp: 100,
+    unique: true, weakness: 'fire',
+    specialText:
+      'Aqua Nova — Whenever an opponent spends filled energy on an ability, this card gains that much energy.',
+    abilities: [
+      { id: 'ice_lance', name: 'Ice Lance', cost: parseCost('++'), ice: true,
+        effects: [{ type: 'damage', amount: 30, damageType: 'ice' }] },
+      { id: 'chilling_winds', name: 'Chilling Winds', cost: parseCost('0++'), ice: true,
+        special: 'chillingWinds', effects: [] },
+      { id: 'deep_freeze', name: 'Deep Freeze', cost: parseCost('+++++'), ice: true,
+        special: 'deepFreeze', effects: [] },
+    ],
+  },
+  gorruk_warchieftan: {
+    kind: 'monster', id: 'gorruk_warchieftan', name: 'Gorruk, Warchieftan', points: 4, maxHp: 140,
+    unique: true, defense: 1, goldAffinity: true, families: ['orc'],
+    specialText:
+      'Shinies for me Plunderers — Orcs, goblins, and trolls you control have Gold Affinity. Whenever one of them deals damage to another monster, it gains 1 gold.',
+    abilities: [
+      { id: 'dragonbone_spear', name: 'Dragonbone Spear', cost: parseCost('0+'),
+        effects: [{ type: 'chanceBoostDamage', base: 30, boosted: 40, successFaces: highFaces(3) }] },
+      { id: 'warcry', name: 'Warcry', cost: parseCost('+'), free: true,
+        special: 'warcry', effects: [] },
+      { id: 'meat_to_eat', name: 'Meat to Eat', cost: parseCost('++'),
+        effects: [{ type: 'healSelf', amount: 30 }] },
+    ],
+  },
+  thornflower_monstrosity: {
+    kind: 'monster', id: 'thornflower_monstrosity', name: 'Thornflower Monstrosity', points: 5, maxHp: 100,
+    unique: true, weakness: 'fire', families: ['plant'],
+    specialText:
+      'Monstrous Growth — Whenever this card would heal HP, you may choose to instead create and place a non-unique Thornflower Monstrosity worth 0 points adjacent to any Thornflower Monstrosity you control. Whenever a Thornflower Monstrosity you control gains energy, all copies of it gain energy.',
+    abilities: [
+      { id: 'growth', name: 'Growth', cost: parseCost('++'), free: true,
+        special: 'thornGrowth', effects: [] },
+      { id: 'thorns', name: 'Thorns', cost: parseCost('0'),
+        special: 'thorns', effects: [] },
+      { id: 'overwhelm', name: 'Overwhelm', cost: parseCost('+'),
+        special: 'overwhelm', effects: [] },
     ],
   },
   ashling: {
@@ -1846,8 +1983,30 @@ export function hasDarkCharge(monster: FieldMonster): boolean {
   return getMonster(identityDefId(monster)).darkCharge === true
 }
 
-export function hasGoldAffinity(monster: FieldMonster): boolean {
-  return getMonster(identityDefId(monster)).goldAffinity === true
+export function isPlunderer(defId: string): boolean {
+  const card = getCard(defId)
+  if (card.kind !== 'monster') return false
+  return (
+    card.families?.includes('orc') === true ||
+    card.families?.includes('goblin') === true ||
+    card.families?.includes('troll') === true
+  )
+}
+
+export function controlsGorruk(player: PlayerState): boolean {
+  if (player.beside && identityDefId(player.beside) === 'gorruk_warchieftan') return true
+  return player.field.some((monster) => monster && identityDefId(monster) === 'gorruk_warchieftan')
+}
+
+export function hasGoldAffinity(monster: FieldMonster, state?: GameState): boolean {
+  if (getMonster(identityDefId(monster)).goldAffinity === true) return true
+  if (!state || !isPlunderer(identityDefId(monster))) return false
+  const owner = state.players.find(
+    (player) =>
+      player.field.some((other) => other?.instanceId === monster.instanceId) ||
+      player.beside?.instanceId === monster.instanceId,
+  )
+  return owner ? controlsGorruk(owner) : false
 }
 
 export function canUseDarkCharge(player: PlayerState): boolean {
@@ -1913,9 +2072,15 @@ export type CardSearchType =
   | 'woody'
   | 'stormling'
   | 'blob'
+  | 'pirate'
+  | 'unending_legion'
+  | 'orc'
+  | 'goblin'
+  | 'troll'
   | 'dark_charge'
   | 'gold_affinity'
   | 'enchantment'
+  | 'unique'
 
 /** Specials whose printed hit is this type even when the ability has no damage effect. */
 const SPECIAL_DAMAGE_TYPES: Record<string, Exclude<DamageType, 'untyped'>[]> = {
@@ -1995,6 +2160,16 @@ export function cardMatchesSearchType(defId: string, type: CardSearchType): bool
   if (type === 'dark_charge') return card.kind === 'monster' && card.darkCharge === true
   if (type === 'gold_affinity') return card.kind === 'monster' && card.goldAffinity === true
   if (type === 'enchantment') return card.kind === 'equipment' && card.enchantment === true
+  if (type === 'unique') {
+    return (card.kind === 'monster' || card.kind === 'equipment') && card.unique === true
+  }
+  if (type === 'pirate') return card.kind === 'monster' && card.families?.includes('pirate') === true
+  if (type === 'unending_legion') {
+    return card.kind === 'monster' && card.families?.includes('unending_legion') === true
+  }
+  if (type === 'orc' || type === 'goblin' || type === 'troll') {
+    return card.kind === 'monster' && card.families?.includes(type) === true
+  }
   if (type === 'light' && card.kind === 'monster' && card.families?.includes('light')) return true
   if (card.kind === 'effect') return EFFECT_DAMAGE_TYPES[card.effectId]?.includes(type) === true
   if (card.kind !== 'monster') return false

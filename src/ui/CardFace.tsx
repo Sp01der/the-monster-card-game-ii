@@ -29,6 +29,8 @@ type Props = {
   teamAttackBonus?: number
   /** Larrathere Knight wind damage from healing on the owner's previous turn. */
   windDamageBonus?: number
+  /** Gold Affinity granted by Gorruk while this card is an orc, goblin, or troll. */
+  grantedGoldAffinity?: boolean
   onPassiveClick?: () => void
 }
 
@@ -44,6 +46,7 @@ export function CardFace({
   extraDefense = 0,
   teamAttackBonus = 0,
   windDamageBonus = 0,
+  grantedGoldAffinity = false,
   onPassiveClick,
 }: Props) {
   const card = getCard(defId)
@@ -61,6 +64,7 @@ export function CardFace({
           ? { ...card, abilities: monsterAbilities(field).filter((ability) => ability.id !== 'spear') }
           : card,
         field ? grantedAbilities(field) : [],
+        field,
       ),
       field,
       teamAttackBonus,
@@ -77,7 +81,7 @@ export function CardFace({
             {card.name}
             {field?.shapeshiftDefId ? ` as ${identity.name}` : ''}
           </span>
-          <span className="card-points">{card.points}pt</span>
+          <span className="card-points">{field?.pointsOverride ?? card.points}pt</span>
         </header>
         <div className="card-stats">
           <span>♥ {hp}</span>
@@ -96,16 +100,35 @@ export function CardFace({
           {identity.families?.includes('plant') ? <span className="tag">Plant</span> : null}
           {identity.families?.includes('woody') ? <span className="tag">Woody</span> : null}
           {identity.families?.includes('stormling') ? <span className="tag">Stormling</span> : null}
+          {identity.families?.includes('pirate') || field?.pirate ? (
+            <span className="tag">Pirate</span>
+          ) : null}
+          {identity.families?.includes('unending_legion') ? (
+            <span className="tag">Unending Legion</span>
+          ) : null}
+          {identity.families?.includes('orc') ? <span className="tag">Orc</span> : null}
+          {identity.families?.includes('goblin') ? <span className="tag">Goblin</span> : null}
+          {identity.families?.includes('troll') ? <span className="tag">Troll</span> : null}
+          {identity.unique && field?.pointsOverride === undefined ? (
+            <span className="tag">Unique</span>
+          ) : null}
           {field && (field.shadowBonus ?? 0) > 0 ? (
             <span className="tag">shadow +{field.shadowBonus}</span>
           ) : null}
           {windDamageBonus > 0 ? <span className="tag">wind +{windDamageBonus}</span> : null}
+          {(field?.havenDefense ?? 0) > 0 ? (
+            <span className="tag">haven +{field?.havenDefense}</span>
+          ) : null}
           {field?.enteredThisTurn && identityDefId(field) === 'hollow_rogue' ? (
             <span className="tag">×2</span>
           ) : null}
           {identity.darkCharge ? <span className="tag">Dark Charge</span> : null}
-          {identity.goldAffinity ? <span className="tag">Gold Affinity</span> : null}
-          {field && identity.goldAffinity ? <span>gold {field.gold ?? 0}</span> : null}
+          {identity.goldAffinity || grantedGoldAffinity ? (
+            <span className="tag">Gold Affinity</span>
+          ) : null}
+          {field && (identity.goldAffinity || grantedGoldAffinity) ? (
+            <span>gold {field.gold ?? 0}</span>
+          ) : null}
         </div>
         {field && (
           <div className="card-stance-row">
@@ -115,6 +138,8 @@ export function CardFace({
               <span className="stance-pill lit">lit</span>
             )}
             {field.honourGuardUntilNextTurn && <span className="stance-pill honour">honour</span>}
+            {field.paralyzedBy !== undefined && <span className="stance-pill">paralyzed</span>}
+            {field.chillSpendUntil !== undefined && <span className="stance-pill">chilled</span>}
             {field.protectingInstanceId && <span className="stance-pill">guarding</span>}
             {field.protectedByInstanceId && <span className="stance-pill">protected</span>}
             {field.statuses.map((s, i) => (
@@ -186,6 +211,11 @@ export function CardFace({
             </div>
           )
         )}
+        {(field?.shapeshiftDefId ? identity.specialText : card.specialText) && (
+          <div className="card-passive card-special">
+            <strong>Special</strong> — {field?.shapeshiftDefId ? identity.specialText : card.specialText}
+          </div>
+        )}
         {field?.held && (
           <div className="card-equipment">
             Under:{' '}
@@ -224,8 +254,10 @@ export function CardFace({
                       : undefined
                   }
                 >
-                  {eqCard.name} ♥
-                  {eqCard.kind === 'equipment' && eqCard.indestructible ? '∞' : eq.hp}
+                  {eqCard.name}{' '}
+                  {eqCard.kind === 'equipment' && (eqCard.indestructible || eqCard.unbreakable)
+                    ? '∞'
+                    : `♥${eq.hp}`}
                 </span>
               )
             })}
@@ -243,8 +275,14 @@ export function CardFace({
       </header>
       {card.kind === 'equipment' && (
         <div className="card-stats">
-          <span>♥ {card.maxHp}</span>
+          {card.unbreakable ? <span className="tag">Unbreakable</span> : <span>♥ {card.maxHp}</span>}
+          {card.unique ? <span className="tag">Unique</span> : null}
           {card.enchantment ? <span className="tag">Enchantment</span> : null}
+        </div>
+      )}
+      {card.kind === 'equipment' && card.specialText && (
+        <div className="card-passive card-special">
+          <strong>Special</strong> — {card.specialText}
         </div>
       )}
       <p className="card-body">{cardBodyText(defId)}</p>

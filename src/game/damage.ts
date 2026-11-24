@@ -1,4 +1,4 @@
-import { getMonster, getWeaknesses, identityDefId } from './catalog'
+import { getMonster, getWeaknesses, identityDefId, isPlunderer } from './catalog'
 import {
   isTwoPlayer,
   nextLivingPlayerId,
@@ -32,6 +32,52 @@ export function wearsLifestealBlade(monster: FieldMonster): boolean {
   return monster.equipment.some((e) => e.defId === 'lifesteal_blade')
 }
 
+export function wearsYentir(monster: FieldMonster): boolean {
+  return monster.equipment.some((e) => e.defId === 'yentir_starforged')
+}
+
+const YENTIR_TYPES: DamageType[] = [
+  'fire',
+  'water',
+  'ice',
+  'electric',
+  'earth',
+  'wind',
+  'poison',
+  'shadow',
+  'light',
+]
+
+/**
+ * Types that count for weakness, Stone, and type-triggered abilities.
+ * A multi-type packet keeps every listed type. Yentir adds every elemental type.
+ */
+export function effectiveDamageTypes(
+  attacker: FieldMonster | null,
+  damageType: DamageType = 'untyped',
+  damageTypes?: DamageType[],
+): DamageType[] {
+  let types = damageTypes?.length
+    ? [...damageTypes]
+    : damageType === 'untyped'
+      ? []
+      : [damageType]
+  if (attacker && wearsYentir(attacker)) {
+    for (const type of YENTIR_TYPES) {
+      if (!types.includes(type)) types.push(type)
+    }
+    for (const keep of ['sonic', 'blast'] as DamageType[]) {
+      if (
+        (damageTypes?.includes(keep) || damageType === keep) &&
+        !types.includes(keep)
+      ) {
+        types.push(keep)
+      }
+    }
+  }
+  return types
+}
+
 /** Lifesteal Blade adds one kept energy to every ability. */
 export function lifestealRequire(monster: FieldMonster, require: number): number {
   return require + (wearsLifestealBlade(monster) ? 1 : 0)
@@ -51,9 +97,10 @@ export function efficiencyCount(monster: FieldMonster): number {
  */
 export function adjustedCost(monster: FieldMonster, cost: EnergyCost): EnergyCost {
   const converted = Math.min(cost.spend, efficiencyCount(monster))
+  const chill = monster.chillSpendUntil !== undefined ? 1 : 0
   return {
     require: cost.require + converted + (wearsLifestealBlade(monster) ? 1 : 0),
-    spend: cost.spend - converted,
+    spend: cost.spend - converted + chill,
   }
 }
 
@@ -103,10 +150,17 @@ export function knightWindBonus(healedLastTurn: number | undefined): number {
 
 export function attackBonusFor(state: GameState, attacker: FieldMonster | null): number {
   const own = attacker?.attackBonus ?? 0
-  if (!attacker || !state.players[state.activePlayer].field.some((monster) => monster?.instanceId === attacker.instanceId)) {
-    return own
-  }
-  return (state.players[state.activePlayer].attackBonus ?? 0) + own
+  const active = state.players[state.activePlayer]
+  const onActiveSide =
+    attacker !== null &&
+    (active.field.some((monster) => monster?.instanceId === attacker.instanceId) ||
+      active.beside?.instanceId === attacker.instanceId)
+  if (!attacker || !onActiveSide) return own
+  const tribe =
+    (active.tribeAttackBonus ?? 0) > 0 && isPlunderer(identityDefId(attacker))
+      ? (active.tribeAttackBonus ?? 0)
+      : 0
+  return (active.attackBonus ?? 0) + tribe + own
 }
 
 /**
@@ -219,11 +273,7 @@ export function computeDamage(args: {
     bonusBeforeWeakness = 0,
   } = args
   if (base <= 0) return 0
-  const types = damageTypes?.length
-    ? damageTypes
-    : damageType === 'untyped'
-      ? []
-      : [damageType]
+  const types = effectiveDamageTypes(attacker, damageType, damageTypes)
   let amount = base
   if (attacker && !wearsSaphireRing(attacker) && attacker.statuses.some((status) => status.kind === 'weakened')) {
     amount = roundToNearest10(amount / 2)
@@ -237,6 +287,9 @@ export function computeDamage(args: {
   }
   if (attacker && wearsLifestealBlade(attacker)) {
     amount += 10
+  }
+  if (attacker && wearsYentir(attacker)) {
+    amount += 20
   }
   if (attacker) amount += strengthCount(attacker) * 10
   if (attacker && identityDefId(attacker) === 'loot_goblin') {
@@ -273,8 +326,14 @@ export function computeDamage(args: {
   if (!isPiercing) {
     const shieldDefense = defender.equipment.filter((e) => e.defId === 'shield').length
     const fortify = (defender.fortifyHitsLeft ?? 0) > 0 ? 1 : 0
+    const haven = defender.havenDefense ?? 0
     const defense =
-      (def.defense ?? 0) + shieldDefense + fortify + defenseBonus + strengthCount(defender)
+      (def.defense ?? 0) +
+      shieldDefense +
+      fortify +
+      defenseBonus +
+      strengthCount(defender) +
+      haven
     if (defense > 0) {
       amount = Math.max(10, amount - defense * 10)
     }

@@ -73,9 +73,15 @@ describe('storm and legion cards', () => {
       points: 4, maxHp: 150, families: ['stormling'],
     })
     expect(getMonster('stormling_commander').weakness).toBeUndefined()
-    expect(getMonster('unending_legionary')).toMatchObject({ points: 2, maxHp: 80, weakness: 'electric' })
+    expect(getMonster('unending_legionary')).toMatchObject({
+      points: 2, maxHp: 80, weakness: 'electric', families: ['unending_legion'],
+    })
     expect(getMonster('unending_legionary').abilities.find((a) => a.id === 'relentless')?.free).toBe(true)
-    expect(getMonster('unending_bannerman')).toMatchObject({ points: 2, maxHp: 80, weakness: 'electric' })
+    expect(getMonster('unending_bannerman')).toMatchObject({
+      points: 2, maxHp: 80, weakness: 'electric', families: ['unending_legion'],
+    })
+    expect(getMonster('unending_archer').families).toEqual(['unending_legion'])
+    expect(getMonster('relkar_goldflame').families).toEqual(['unending_legion'])
     expect(getMonster('veyan_bard')).toMatchObject({ points: 2, maxHp: 90 })
     expect(getMonster('gale_serpent')).toMatchObject({ points: 2, maxHp: 90, weakness: 'ice' })
     expect(countsAsElementalCard('stormling')).toBe(true)

@@ -8,9 +8,11 @@ import {
   getMonster,
   replacementBlobHost,
   SUMMON_ELEMENTS,
+  ELEMENTAL_TYPES,
   identityDefId,
   hasDarkCharge,
   hasGoldAffinity,
+  isPlunderer,
   isBlobMonster,
   isBoneling,
   isFireMonster,
@@ -37,7 +39,9 @@ import {
   isFrozen,
   isGooed,
   isStone,
+  isThornflower,
   monsterAt,
+  occupiedSlots,
   targetInstanceId,
 } from './helpers'
 import {
@@ -57,15 +61,16 @@ import {
   withHostEquipment,
   withoutProtected,
 } from './targeting'
-import type {
-  AbilityChoice,
-  AbilityDef,
-  GameAction,
-  GameState,
-  PlayerId,
-  PlayerState,
-  Stance,
-  TargetRef,
+import {
+  BESIDE_SLOT,
+  type AbilityChoice,
+  type AbilityDef,
+  type GameAction,
+  type GameState,
+  type PlayerId,
+  type PlayerState,
+  type Stance,
+  type TargetRef,
 } from './types'
 
 function canChangeStance(monster: NonNullable<PlayerState['field'][number]>): boolean {
@@ -126,6 +131,8 @@ const DAMAGE_SPECIALS = new Set([
   'vineWhip',
   'ancientPowers',
   'fireball',
+  'goldenEnergy',
+  'chillingWinds',
 ])
 
 function abilityDealsDamage(ability: AbilityDef): boolean {
@@ -167,7 +174,7 @@ function expandGoldPayments(state: GameState, actions: GameAction[]): GameAction
       expanded.push(action)
       continue
     }
-    const monster = player.field[action.slot]
+    const monster = monsterAt(player, action.slot)
     const ability = monster ? monsterAbilities(monster).find((a) => a.id === action.abilityId) : undefined
     if (!monster || !ability || (monster.gold ?? 0) <= 0) {
       expanded.push(action)
@@ -211,6 +218,7 @@ function listPilePlayActions(
     const card = cards[handIndex]
     const def = getCard(card.defId)
     if (def.kind === 'monster') {
+      if (def.id === 'relkar_goldflame' && player.points < 6) continue
       const hostId = replacementBlobHost(def.id)
       if (hostId) {
         for (let slot = 0; slot < player.field.length; slot++) {
@@ -223,6 +231,17 @@ function listPilePlayActions(
             })
           }
         }
+        continue
+      }
+      if (def.besideRow) {
+        if (player.beside) continue
+        actions.push({
+          type: 'PLAY_MONSTER',
+          handIndex,
+          slot: BESIDE_SLOT,
+          stance: 'active',
+          ...(fromDiscard ? { fromDiscard: true } : {}),
+        })
         continue
       }
       if (emptySlots(player).length === 0) continue
@@ -309,6 +328,12 @@ function actionTargetList(action: GameAction): TargetRef[] {
     case 'RAIN_GOO_TARGET':
     case 'CLOUD_BLESS':
     case 'VERIDIAN_STRIKE':
+    case 'FEED_TARGET':
+    case 'GOLDEN_ENERGY':
+    case 'ELEMENTAL_STRIKE':
+    case 'DRAGGED_DEEP':
+    case 'FEED_BEAST':
+    case 'DEEP_FREEZE':
       return [action.target]
     default:
       return []
@@ -352,8 +377,10 @@ function actingPlayerId(state: GameState): PlayerId {
 function ignoresBonelingLock(state: GameState, action: GameAction): boolean {
   const actor = actingPlayerId(state)
   if (action.type === 'USE_ABILITY') {
-    const monster = state.players[actor].field[action.slot]
+    const monster = monsterAt(state.players[actor]!, action.slot)
     if (!monster) return false
+    // Wings of Night temporarily makes that card's abilities any-card attacks.
+    if (monster.wingsAnyTarget) return true
     const ability = monsterAbilities(monster).find((a) => a.id === action.abilityId)
     if (!ability) return false
     if (ability.ranged || ability.targetMode === 'anyMonster') return true
@@ -370,7 +397,18 @@ function ignoresBonelingLock(state: GameState, action: GameAction): boolean {
     const pending = state.pending
     return pending?.kind === 'multiHit' && pending.scope === 'any'
   }
+  if (action.type === 'FEED_TARGET') {
+    return state.pending?.kind === 'feedTarget' && Boolean(state.pending.ignoreStance)
+  }
   if (action.type === 'FAIRY_HEAL') return true
+  if (
+    action.type === 'GOLDEN_ENERGY' ||
+    action.type === 'DEEP_FREEZE' ||
+    action.type === 'FEED_BEAST' ||
+    action.type === 'DRAGGED_DEEP'
+  ) {
+    return true
+  }
   return false
 }
 
@@ -497,7 +535,130 @@ function collectLegalActions(state: GameState): GameAction[] {
       const actions: GameAction[] = []
       for (let slot = 0; slot < owner.field.length; slot++) {
         const monster = owner.field[slot]
-        if (monster && hasGoldAffinity(monster)) actions.push({ type: 'ASSIGN_GOLD', slot })
+        if (monster && hasGoldAffinity(monster, state)) {
+          actions.push({ type: 'ASSIGN_GOLD', slot })
+        }
+      }
+      if (owner.beside && hasGoldAffinity(owner.beside, state)) {
+        actions.push({ type: 'ASSIGN_GOLD', slot: BESIDE_SLOT })
+      }
+      for (const side of state.players) {
+        if (side.id === owner.id) continue
+        if (side.beside && hasGoldAffinity(side.beside, state)) {
+          actions.push({ type: 'ASSIGN_GOLD', slot: BESIDE_SLOT, player: side.id })
+        }
+        for (let slot = 0; slot < side.field.length; slot++) {
+          const monster = side.field[slot]
+          if (monster && identityDefId(monster) === 'kings_of_the_ocean') {
+            actions.push({ type: 'ASSIGN_GOLD', slot, player: side.id })
+          }
+        }
+      }
+      return actions
+    }
+    if (pending.kind === 'incinerationPick') {
+      return pending.candidates
+        .filter((target) => {
+          const owner = state.players[target.player]
+          if (!owner) return false
+          if (target.kind !== 'monster') return false
+          return target.slot === BESIDE_SLOT ? Boolean(owner.beside) : Boolean(owner.field[target.slot])
+        })
+        .map((target) => ({ type: 'INCINERATION_PICK' as const, target }))
+    }
+    if (pending.kind === 'bloodlustChoice') {
+      return [
+        { type: 'BLOODLUST_ACCEPT' },
+        { type: 'BLOODLUST_DECLINE' },
+      ]
+    }
+    if (pending.kind === 'thornGrowth') {
+      const owner = state.players[pending.owner]
+      const actions: GameAction[] = [{ type: 'THORN_GROWTH_DECLINE' }]
+      for (let slot = 0; slot < owner.field.length; slot++) {
+        const monster = owner.field[slot]
+        if (monster && isThornflower(monster.defId)) {
+          actions.push({ type: 'THORN_GROWTH_ACCEPT', besideSlot: slot })
+        }
+      }
+      return actions
+    }
+    if (pending.kind === 'legionGrows') {
+      const owner = state.players[pending.owner]
+      return owner.hand
+        .filter((card) => getCard(card.defId).kind === 'monster')
+        .map((card) => ({ type: 'LEGION_GROWS_DISCARD' as const, instanceId: card.instanceId }))
+    }
+    if (pending.kind === 'goldenEnergy') {
+      return anyCardTargets(state).map((target) => ({ type: 'GOLDEN_ENERGY' as const, target }))
+    }
+    if (pending.kind === 'elementalStrike') {
+      const owner = state.players[pending.owner]
+      const source = monsterAt(owner, pending.slot)
+      if (!source) return []
+      return withoutProtected(
+        state,
+        abilityTargets(state, pending.owner, source, {
+          id: 'elemental_strike',
+          name: 'Elemental Strike',
+          cost: { require: 0, spend: 0 },
+          effects: [{ type: 'damage', amount: 40, damageTypes: [...ELEMENTAL_TYPES] }],
+        }),
+      ).map((target) => ({ type: 'ELEMENTAL_STRIKE' as const, target }))
+    }
+    if (pending.kind === 'draggedDeep') {
+      const actions: GameAction[] = []
+      for (const side of state.players) {
+        for (const slot of occupiedSlots(side)) {
+          const monster = monsterAt(side, slot)
+          if (!monster || monster.stance !== 'withdrawn') continue
+          actions.push({
+            type: 'DRAGGED_DEEP',
+            target: { kind: 'monster', player: side.id, slot },
+          })
+        }
+      }
+      return actions
+    }
+    if (pending.kind === 'feedBeast') {
+      const choosing = pending.queue[0]
+      if (choosing === undefined) return []
+      return anyCardTargets(state)
+        .filter((target) => target.player === choosing)
+        .map((target) => ({ type: 'FEED_BEAST' as const, target }))
+    }
+    if (pending.kind === 'deepFreeze') {
+      return anyCardTargets(state)
+        .filter((target) => !pending.chosen.includes(targetKey(target)))
+        .map((target) => ({ type: 'DEEP_FREEZE' as const, target }))
+    }
+    if (pending.kind === 'warcryPick') {
+      const owner = state.players[pending.owner]
+      const actions: GameAction[] = [{ type: 'WARCRY_SKIP' }]
+      for (const slot of occupiedSlots(owner)) {
+        if (slot === pending.slot) continue
+        const monster = monsterAt(owner, slot)
+        if (!monster || !isPlunderer(identityDefId(monster))) continue
+        actions.push({ type: 'WARCRY_PICK', slot })
+      }
+      return actions
+    }
+    if (pending.kind === 'feedTarget') {
+      const owner = state.players[pending.owner]
+      const source = monsterAt(owner, pending.slot)
+      const actions: GameAction[] = []
+      if (source) {
+        for (const side of state.players) {
+          for (const slot of occupiedSlots(side)) {
+            const monster = monsterAt(side, slot)
+            if (!monster || monster.hp <= 0 || monster.hp >= monster.maxHp) continue
+            if (!pending.ignoreStance && monster.stance !== 'active') continue
+            actions.push({
+              type: 'FEED_TARGET',
+              target: { kind: 'monster', player: side.id, slot },
+            })
+          }
+        }
       }
       return actions
     }
@@ -799,7 +960,7 @@ function collectLegalActions(state: GameState): GameAction[] {
     if (pending.kind === 'fireballShot') {
       const wizard = state.players[pending.owner].field[pending.slot]
       if (!wizard) return []
-      const ability = monsterAbilities(wizard).find((candidate) => candidate.id === 'fireball')
+      const ability = monsterAbilities(wizard).find((candidate) => candidate.special === 'fireball')
       if (!ability) return []
       return withoutProtected(state, abilityTargets(state, pending.owner, wizard, ability)).map(
         (target) => ({ type: 'FIREBALL_SHOT' as const, target }),
@@ -1186,12 +1347,19 @@ function collectLegalActions(state: GameState): GameAction[] {
           const card = player.hand[handIndex]
           const def = getCard(card.defId)
           if (def.kind !== 'monster') continue
+          if (def.id === 'relkar_goldflame' && player.points < 6) continue
           const hostId = replacementBlobHost(def.id)
           if (hostId) {
             for (let slot = 0; slot < player.field.length; slot++) {
               if (player.field[slot]?.defId === hostId) {
                 actions.push({ type: 'REPLACE_MONSTER', handIndex, slot })
               }
+            }
+            continue
+          }
+          if (def.besideRow) {
+            if (!player.beside) {
+              actions.push({ type: 'PLAY_MONSTER', handIndex, slot: BESIDE_SLOT, stance: 'active' })
             }
             continue
           }
@@ -1205,14 +1373,16 @@ function collectLegalActions(state: GameState): GameAction[] {
         break
       }
 
-      for (let slot = 0; slot < player.field.length; slot++) {
+      for (const slot of occupiedSlots(player)) {
         const monster = monsterAt(player, slot)
         if (!monster || isFrozen(monster) || isGooed(monster) || isStone(monster) || isAsleep(monster) || monster.abilitiesSealed) continue
+        if (monster.paralyzedBy !== undefined) continue
         const acted = state.actedSlots.includes(slot)
         const extraUse = (monster.extraAbilityUses ?? 0) > 0
         if (acted && !extraUse) continue
         for (const ability of monsterAbilities(monster)) {
           if (!canUseAbilityWhileWithdrawn(monster, ability)) continue
+          if (ability.special === 'wingsOfNight' && monster.wingsAnyTarget) continue
           if (
             ability.special !== 'chaosFireworks' &&
             !canAfford(
@@ -1228,6 +1398,45 @@ function collectLegalActions(state: GameState): GameAction[] {
           if (!acted && costsTeam && state.abilityUsesLeft <= 0 && !extraUse) continue
           if (ability.special === 'fireball' && player.hand.length === 0) continue
           if (ability.special === 'arcaneTome' && (monster.tome?.length ?? 0) === 0) continue
+          if (
+            ability.special === 'legionGrows' &&
+            (player.hand.every((card) => getCard(card.defId).kind !== 'monster') ||
+              emptySlots(player).length === 0)
+          ) {
+            continue
+          }
+          if (ability.special === 'hailToTheKings') {
+            for (const target of anyCardTargets(state).filter((hit) => hit.player === player.id)) {
+              actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, target })
+            }
+            continue
+          }
+          if (ability.special === 'feed') {
+            actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id })
+            continue
+          }
+          if (ability.special === 'fury' || ability.special === 'viciousClaws') {
+            const clawTargets = monster.wingsAnyTarget
+              ? anyCardTargets(state)
+              : abilityTargets(state, player.id, monster, ability)
+            for (const target of clawTargets) {
+              actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, target })
+            }
+            continue
+          }
+          if (monster.wingsAnyTarget && abilityNeedsTarget(ability)) {
+            for (const target of anyCardTargets(state)) {
+              if (abilityNeedsChoice(ability)) {
+                for (const choice of ['firePunchFull', 'firePunchBurn'] as AbilityChoice[]) {
+                  if (ability.id !== 'fire_punch') break
+                  actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, target, choice })
+                }
+                if (ability.id === 'fire_punch') continue
+              }
+              actions.push({ type: 'USE_ABILITY', slot, abilityId: ability.id, target })
+            }
+            continue
+          }
           if (ability.special === 'trickery') {
             const foes = isTwoPlayer(state)
               ? [state.players[player.id === 0 ? 1 : 0]!]
@@ -1693,7 +1902,8 @@ function collectLegalActions(state: GameState): GameAction[] {
                 'guardiansBlade', 'smash', 'ironTail', 'openFourthFloor', 'underground',
                 'greatAxe', 'dwarvenSpirit', 'dragonTalons', 'blast', 'druggedSuck', 'flashbloom',
                 'scent', 'burningSpear', 'greenHeal',
-                'freezingGoop', 'bigRedSplat', 'bigBlueSplat', 'ancientPowers', 'enchantMonster']
+                'freezingGoop', 'bigRedSplat', 'bigBlueSplat', 'ancientPowers', 'enchantMonster',
+                'goldenEnergy', 'chillingWinds']
                 .includes(ability.special ?? '')
             ) {
               let targets =
@@ -1812,6 +2022,24 @@ function collectLegalActions(state: GameState): GameAction[] {
         if (!charged || !hasDarkCharge(charged) || !canReceiveEnergy(charged)) continue
         for (const card of player.discard) {
           actions.push({ type: 'DARK_CHARGE', slot, discardInstanceId: card.instanceId })
+        }
+      }
+      const aside = player.setAside
+      if (aside) {
+        const def = getCard(aside.defId)
+        if (def.kind === 'monster') {
+          const pointsOk = def.id !== 'relkar_goldflame' || player.points >= 6
+          if (pointsOk) {
+            if (def.besideRow && !player.beside) {
+              actions.push({ type: 'PLAY_SET_ASIDE', slot: BESIDE_SLOT, stance: 'active' })
+            } else if (!def.besideRow) {
+              for (const slot of emptySlots(player)) {
+                for (const stance of playStances(def.id)) {
+                  actions.push({ type: 'PLAY_SET_ASIDE', slot, stance })
+                }
+              }
+            }
+          }
         }
       }
       if (state.energyPool > 0 || state.blobEnergyPool > 0 || state.bannerEnergyPool > 0) actions.push({ type: 'SKIP_ENERGY' })

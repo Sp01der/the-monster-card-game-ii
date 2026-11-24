@@ -125,6 +125,14 @@ export type MonsterDef = {
   defense?: number
   families?: string[]
   passiveText?: string
+  /** Printed Special: a rule enforced while this card is in play. */
+  specialText?: string
+  /** One copy per deck. Unique monsters cannot be the top monster. */
+  unique?: boolean
+  /** Sits beside the row: no field slot, cannot withdraw. */
+  besideRow?: boolean
+  /** May only gain and spend Gold as energy. */
+  goldOnly?: boolean
   /** Printed tag: may receive extra energy in the energy phase by destroying discarded cards. */
   darkCharge?: boolean
   /** Printed tag: may hold Gold and spend it as energy. */
@@ -148,6 +156,10 @@ export type EquipmentDef = {
   name: string
   maxHp: number
   equipmentId: string
+  /** One copy per deck. */
+  unique?: boolean
+  /** Printed Special. */
+  specialText?: string
   /** Created during play. Hidden from the deck builder. */
   createdOnly?: boolean
   /** Damage and destroy effects cannot remove this equipment. */
@@ -158,6 +170,8 @@ export type EquipmentDef = {
   enchantment?: boolean
   /** Leaving play Removes this card, so it cannot be replayed. */
   removeOnLeave?: boolean
+  /** No HP; damage and destroy effects cannot remove this equipment. */
+  unbreakable?: boolean
 }
 
 /** A structure. Ethereal structures are not on the field and have no HP. */
@@ -234,6 +248,22 @@ export type FieldMonster = {
   abilitiesUnlocked?: boolean
   /** Hollow Rogue: damage is doubled on the turn this card was played. */
   enteredThisTurn?: boolean
+  /** Created token: slain for this many points instead of the printed value. */
+  pointsOverride?: number
+  /** Pirate tag from Hail to the Kings, or a printed pirate. */
+  pirate?: boolean
+  /** Relkar Fury: current base damage of Fury. */
+  furyDamage?: number
+  /** Devadian Bloodlust stacks. */
+  bloodlustStacks?: number
+  /** Temporary defense from Pirate's Haven until end of turn. */
+  havenDefense?: number
+  /** Wings of Night: the next ability may target any monster. */
+  wingsAnyTarget?: boolean
+  /** Paralyzing Fear: cannot act or gain energy until this player's turn starts. */
+  paralyzedBy?: PlayerId
+  /** Chilling Winds: abilities cost one extra filled energy until this player's turn starts. */
+  chillSpendUntil?: PlayerId
 }
 
 /** A card placed under another card by Absorb. */
@@ -303,6 +333,10 @@ export type PlayerState = {
   spyMarkInstanceId?: string
   /** Seven slots, plus a temporary slot for each Lovni's Weed that had nowhere else to go. */
   field: (FieldMonster | null)[]
+  /** Unique monster sitting beside the row (The Kings of the Ocean). */
+  beside?: FieldMonster | null
+  /** Unique set aside before the game; played by skipping an energy phase. */
+  setAside?: HandCard | null
   hasFinishedFirstTurn: boolean
   /** True until the player has completed their first turn. */
   isFirstTurn: boolean
@@ -321,6 +355,8 @@ export type PlayerState = {
   damagedByInstanceIds?: string[]
   /** ATTACK!: added to this player's damaging hits before weakness, until the turn ends. */
   attackBonus?: number
+  /** Warcry: +10 damage for this player's orcs, goblins, and trolls until the turn ends. */
+  tribeAttackBonus?: number
   /** Time Warp: this player takes another full turn after the current one ends. */
   extraTurn?: boolean
   /** Public Speaker: extra team actions to add at the start of the next main phase. */
@@ -337,6 +373,11 @@ export type PlayerState = {
   healedLastTurn?: number
   /** Render Aid: extra energy in the upcoming energy phase. */
   bonusEnergy?: number
+  /**
+   * Tribute: instance ids safe from the Kings until this player's end step
+   * after the Kings player's next turn completes. Value is remaining Kings turns.
+   */
+  tributeSafe?: Record<string, number>
 }
 
 export type LogEntry = {
@@ -397,6 +438,10 @@ export type GameState = {
   nextInstanceId: number
   /** Owners of Golden Dice waiting for the next roll, oldest first. */
   goldenDice?: PlayerId[]
+  /** Persistent Unique stacks keyed by instance id (Fury, Bloodlust). */
+  cardMemory?: Record<string, { furyDamage?: number; bloodlustStacks?: number }>
+  /** Instance ids that count as pirate for the rest of the match. */
+  pirateTags?: string[]
   /** Face chosen for the roll that is being resolved right now. Consumed once. */
   goldenDieFace?: number
   /** Recursion: the next effect is replayed once per charge as soon as it finishes. */
@@ -438,6 +483,8 @@ type PendingShape =
       scope?: 'any'
       /** Cards already hit, so the next choice must be a different card. */
       excludeInstanceIds?: string[]
+      /** Per-hit amounts from first to last (e.g. Thorns 20 then 10). */
+      amounts?: number[]
     }
   | {
       kind: 'stormType'
@@ -593,6 +640,10 @@ type PendingShape =
       preferredInstanceId?: string
       /** Uprising: energy granted to each monster as it enters. */
       grantEnergy?: number
+      /** After the free play (or skipping it), deal Harry's elemental strike. */
+      followUp?: 'elementalStrike'
+      sourceSlot?: number
+      requiredEnergy?: number
     }
   | {
       kind: 'veridianFires'
@@ -704,6 +755,80 @@ type PendingShape =
       remaining: number
       /** Draw one card after the last gold is placed. */
       drawAfter?: boolean
+      /** Monster that generated this gold (Tribute). */
+      sourceInstanceId?: string
+    }
+  | {
+      kind: 'incinerationPick'
+      owner: PlayerId
+      slot: number
+      /** Enemy monsters; the chosen one takes 70 fire, the rest take 20. */
+      candidates: TargetRef[]
+      requiredEnergy?: number
+    }
+  | {
+      kind: 'bloodlustChoice'
+      owner: PlayerId
+      slot: number
+      slainOwner: PlayerId
+      slainSlot: number
+      points: number
+    }
+  | {
+      kind: 'thornGrowth'
+      owner: PlayerId
+      slot: number
+      amount: number
+    }
+  | {
+      kind: 'legionGrows'
+      owner: PlayerId
+      slot: number
+    }
+  | {
+      kind: 'feedTarget'
+      owner: PlayerId
+      slot: number
+      /** Wings of Night: damaged monsters of any stance are legal. */
+      ignoreStance?: boolean
+    }
+  | {
+      kind: 'goldenEnergy'
+      owner: PlayerId
+      slot: number
+    }
+  | {
+      kind: 'elementalStrike'
+      owner: PlayerId
+      slot: number
+      requiredEnergy: number
+    }
+  | {
+      kind: 'draggedDeep'
+      owner: PlayerId
+      slot: number
+      requiredEnergy: number
+    }
+  | {
+      kind: 'feedBeast'
+      owner: PlayerId
+      slot: number
+      requiredEnergy: number
+      /** Players who still need a card chosen, including the Horror's controller. */
+      queue: PlayerId[]
+    }
+  | {
+      kind: 'deepFreeze'
+      sourcePlayer: PlayerId
+      sourceSlot: number
+      remaining: number
+      chosen: string[]
+      requiredEnergy: number
+    }
+  | {
+      kind: 'warcryPick'
+      owner: PlayerId
+      slot: number
     }
   | {
       kind: 'fairyHeal'
@@ -815,8 +940,27 @@ export type GameAction =
       /** Filled-dot cost covered by Gold. That Gold is removed. */
       goldSpend?: number
     }
-  | { type: 'ASSIGN_GOLD'; slot: number }
+  | { type: 'ASSIGN_GOLD'; slot: number; player?: PlayerId }
   | { type: 'HOARD_CHOICE'; mode: 'gold' | 'card' }
+  | {
+      type: 'PLAY_SET_ASIDE'
+      slot: number
+      stance: Stance
+    }
+  | { type: 'INCINERATION_PICK'; target: TargetRef }
+  | { type: 'BLOODLUST_ACCEPT' }
+  | { type: 'BLOODLUST_DECLINE' }
+  | { type: 'THORN_GROWTH_ACCEPT'; besideSlot: number }
+  | { type: 'THORN_GROWTH_DECLINE' }
+  | { type: 'LEGION_GROWS_DISCARD'; instanceId: string }
+  | { type: 'FEED_TARGET'; target: TargetRef }
+  | { type: 'GOLDEN_ENERGY'; target: TargetRef }
+  | { type: 'ELEMENTAL_STRIKE'; target: TargetRef }
+  | { type: 'DRAGGED_DEEP'; target: TargetRef }
+  | { type: 'FEED_BEAST'; target: TargetRef }
+  | { type: 'DEEP_FREEZE'; target: TargetRef }
+  | { type: 'WARCRY_PICK'; slot: number }
+  | { type: 'WARCRY_SKIP' }
   | {
       type: 'PLAY_MONSTER'
       handIndex: number
@@ -947,5 +1091,7 @@ export type GameAction =
 export const FIELD_SIZE = 7
 export const STARTING_POINTS = 6
 export const STARTING_HAND = 4
+/** Target slot for a monster sitting beside the row. */
+export const BESIDE_SLOT = -1
 /** After the energy phase, discard down to this many cards. */
 export const HAND_SIZE_LIMIT = 7
